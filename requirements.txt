@@ -1,0 +1,12 @@
+# Project dependencies. Grows one milestone at a time; only what's needed so far.
+# Used by: the Airflow task venv (docker/airflow/Dockerfile) and your laptop (uv sync).
+
+# milestone 0: connect to every service
+python-dotenv>=1.0
+requests>=2.32
+psycopg[binary]>=3.2
+sqlalchemy>=2.0
+pandas>=2.2
+mlflow==3.1.1          # must match the server version in docker/mlflow/Dockerfile
+litellm>=1.70
+langsmith>=0.3

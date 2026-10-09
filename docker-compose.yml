@@ -1,0 +1,96 @@
+# Local stack for the readmission outreach project.
+# Start everything:  docker compose up -d --build
+# Stop:              docker compose down        (keeps data)
+# Wipe everything:   docker compose down -v     (deletes databases)
+
+services:
+
+  # One Postgres for everything. Separate databases: airflow, mlflow, app.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Airflow in standalone mode: api server, scheduler, dag processor and triggerer
+  # in one container. Production splits these into separate services.
+  airflow:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
+      args:
+        AIRFLOW_VERSION: ${AIRFLOW_VERSION}
+    command: standalone
+    user: "${AIRFLOW_UID}:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"   # no login screen, local only
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+      # inside Docker, services are reached by service name, not localhost
+      APP_DB_HOST: postgres
+      FHIR_BASE_URL: http://hapi:8080/fhir
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      SMTP_HOST: mailpit
+      MAILPIT_API_URL: http://mailpit:8025
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - .:/opt/project
+      - airflow_logs:/opt/airflow/logs
+
+  # Experiment tracking + model registry. Metadata in Postgres, model files in a volume.
+  mlflow:
+    build:
+      context: docker/mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      --artifacts-destination /mlflow/artifacts
+      --serve-artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+
+  # The simulated hospital EHR: a real FHIR R4 server.
+  # Data lives inside the container (H2 database); the generator reloads it anytime.
+  hapi:
+    image: ${HAPI_IMAGE}
+    environment:
+      hapi.fhir.fhir_version: R4
+      hapi.fhir.allow_multiple_delete: "true"
+      hapi.fhir.expunge_enabled: "true"
+    ports:
+      - "8090:8080"
+
+  # Catches every email the agents send. Open http://localhost:8025 to read them.
+  mailpit:
+    image: ${MAILPIT_IMAGE}
+    ports:
+      - "8025:8025"   # web inbox
+      - "1025:1025"   # SMTP
+
+volumes:
+  pgdata:
+  airflow_logs:
+  mlflow_artifacts:

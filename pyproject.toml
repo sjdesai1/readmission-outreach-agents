@@ -1,0 +1,27 @@
+[project]
+name = "readmit"
+version = "0.1.0"
+description = "Synthetic end-to-end readmission risk model + multi-agent patient outreach"
+requires-python = ">=3.11,<3.12"
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }   # one source of truth for deps
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
