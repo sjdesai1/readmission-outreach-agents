@@ -12,7 +12,7 @@ Design: [docs/00_design.md](docs/00_design.md)
 
 | # | Milestone | Status |
 |---|---|---|
-| 0 | Local stack: Postgres, Airflow, MLflow, HAPI FHIR, Mailpit, smoke test, CI | in progress |
+| 0 | Local stack: Postgres, Airflow, MLflow, HAPI FHIR, Mailpit, smoke test, CI | done |
 | 1 | Synthetic world: patients, stays, messy notes, truth, FHIR, ADT events | |
 | 2 | Ingest DAG, dbt staging, data tests, dead letter | |
 | 3 | Note extraction, validators, extraction eval | |
