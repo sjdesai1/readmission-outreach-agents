@@ -123,7 +123,7 @@ def gemini_call():
     used, answer = settings.llm_model, None
     try:
         answer = ask(used)
-    except Exception:   # primary failed: try the fallback, like the real system will
+    except Exception:  # noqa: BLE001 - primary failed for any reason: try the fallback
         used = settings.llm_fallback_model
         answer = ask(used)
     if client is not None and hasattr(client, "flush"):
