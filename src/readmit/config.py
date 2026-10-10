@@ -31,9 +31,9 @@ class Settings:
     airflow_api: str = field(default_factory=lambda: _env("AIRFLOW_API_URL", "http://localhost:8080"))
     # LLM
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
-    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gemini/gemini-2.5-flash-lite"))
-    llm_fallback_model: str = field(default_factory=lambda: _env("LLM_FALLBACK_MODEL", "gemini/gemini-2.5-flash"))
-    llm_judge_model: str = field(default_factory=lambda: _env("LLM_JUDGE_MODEL", "gemini/gemini-2.5-flash"))
+    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gemini/gemini-3.5-flash-lite"))
+    llm_fallback_model: str = field(default_factory=lambda: _env("LLM_FALLBACK_MODEL", "gemini/gemini-3.1-flash-lite"))
+    llm_judge_model: str = field(default_factory=lambda: _env("LLM_JUDGE_MODEL", "gemini/gemini-3.5-flash"))
     # tracing
     langsmith_api_key: str = field(default_factory=lambda: _env("LANGSMITH_API_KEY"))
     langsmith_project: str = field(default_factory=lambda: _env("LANGSMITH_PROJECT", "readmission-outreach"))
