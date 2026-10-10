@@ -25,3 +25,7 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.uv]
+# dependencies live in requirements.txt; tell uv to re-read them when that file changes
+cache-keys = [{ file = "pyproject.toml" }, { file = "requirements.txt" }]
