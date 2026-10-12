@@ -4,7 +4,7 @@
 # /opt/app-venv means Airflow only orchestrates, and tasks run project code with
 # /opt/app-venv/bin/python. Same idea as Airflow's ExternalPythonOperator, or
 # running each task in its own container in production.
-ARG AIRFLOW_VERSION
+ARG AIRFLOW_VERSION=3.1.0
 FROM apache/airflow:${AIRFLOW_VERSION}-python3.11
 
 USER root

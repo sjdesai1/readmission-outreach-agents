@@ -6,23 +6,22 @@ multi-agent chain that reaches flagged patients through the channels they opted 
 with them until a follow-up or telehealth visit is booked. Airflow runs it day by day on a
 simulated clock; LangSmith traces and evaluates every step.
 
-Design: [docs/00_design.md](docs/00_design.md)
+Docs: one per milestone in [docs/](docs/), interview Q&A in [docs/interview_qa.md](docs/interview_qa.md)
 
 ## Status
 
+v1: working end to end. v2: cost optimization and a learning sequencer.
+
 | # | Milestone | Status |
 |---|---|---|
-| 0 | Local stack: Postgres, Airflow, MLflow, HAPI FHIR, Mailpit, smoke test, CI | done |
-| 1 | Synthetic world: patients, stays, messy notes, truth, FHIR, ADT events | |
-| 2 | Ingest DAG, dbt staging, data tests, dead letter | |
-| 3 | Note extraction, validators, extraction eval | |
-| 4 | Features, baselines, XGBoost, calibration, SHAP, MLflow | |
-| 5 | Scoring DAG, tiers, holdout, worklist | |
-| 6 | MCP servers | |
-| 7 | LangGraph chain of action, guardrails, tracing | |
-| 8 | Patient simulator, outreach DAG, channels, portal, nurse queue, timeline viewer | |
-| 9 | Evals, LLM judge, judge assessment, eval report, CI gates | |
-| 10 | Shadow mode, retrain, monitoring, fairness, `make demo` | |
+| 0 | Local stack: Postgres, Airflow, MLflow, Mailpit, smoke test, CI | done |
+| 1 | Simulated hospital, LLM note extraction, XGBoost risk model, live scoring | done |
+| 2 | MCP servers: patient data, scheduling, messaging, referrals, case store | |
+| 3 | Multi-agent system in LangGraph: 5 agents, rule nodes, guardrails, tracing | |
+| 4 | Conversation loop: sequencer, scripted patients, channels, nurse queue, simulated days | |
+| 5 | Evals: per turn, per conversation, guardrails, red team, outcomes, prompt A/B | |
+| 6 | LLM judge and judge assessment | |
+| 7 | Timeline viewer, `make demo` | |
 
 ## Quick start
 
@@ -32,4 +31,4 @@ make up        # start the stack
 make smoke     # check every service
 ```
 
-Details: [docs/01_m0_local_stack.md](docs/01_m0_local_stack.md)
+Then run the milestone 1 pipeline: `make pipeline`

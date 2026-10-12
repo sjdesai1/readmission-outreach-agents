@@ -9,7 +9,6 @@ Goal: every service the project needs runs on the laptop with one command, and a
 | Postgres | Relational database | One server, three databases: `airflow` (Airflow's own bookkeeping), `mlflow` (experiment records), `app` (patients, scores, cases, messages) | `localhost:5432` |
 | Airflow | Workflow orchestrator | Runs the DAGs: ingest, extract, score, outreach ticks, retrain, monitoring, evals. Each run = one simulated day | http://localhost:8080 |
 | MLflow | Experiment tracking + model registry | Logs every training run (params, metrics, model files); champion / challenger | http://localhost:5000 |
-| HAPI FHIR | Real FHIR R4 server | The simulated hospital EHR. Patients, encounters, notes, slots and appointments live here, in the standard healthcare format | http://localhost:8090 |
 | Mailpit | Fake email server with a web inbox | Catches every email the agents send, so they can be read | http://localhost:8025 |
 | LangSmith | Hosted tracing + evals (cloud, free tier) | Shows every LLM call and agent step; runs eval experiments | https://smith.langchain.com |
 | Gemini | LLM (cloud, free tier) | Note extraction, agents, judge. Reached through LiteLLM | none |
@@ -22,7 +21,6 @@ Goal: every service the project needs runs on the laptop with one command, and a
 - `docker compose up` starts them all in the right order
 
 ### Service names vs localhost
-- Inside Docker, containers reach each other by service name: `postgres`, `hapi`, `mlflow`, `mailpit`
 - From the laptop, the same services are at `localhost:<port>`
 - `.env` holds the laptop addresses; `docker-compose.yml` overrides them for the Airflow container
 - Same code, different addresses, no code change. `src/readmit/config.py` reads whichever is set
@@ -60,7 +58,6 @@ Goal: every service the project needs runs on the laptop with one command, and a
 
 ### Smoke test
 - `src/readmit/smoke.py` checks each service independently and prints PASS / FAIL / SKIP
-- FHIR: write, read and delete a throwaway Patient
 - MLflow: log a run with an artifact
 - Mailpit: send an email, find it in the inbox
 - Gemini: list the models the key can use, then one call through LiteLLM with fallback
@@ -94,7 +91,6 @@ cd readmission-outreach-agents
 make setup          # creates .env from .env.example, builds the local Python env
 # edit .env: paste GEMINI_API_KEY and LANGSMITH_API_KEY
 make up             # first build takes several minutes
-make ps             # all services should be "running"; HAPI takes 1-2 min to finish starting
 make smoke          # every check from the laptop
 make smoke-airflow  # every check from inside Airflow
 make test           # unit tests
@@ -104,7 +100,6 @@ Without make, each target is the command written next to it in the `Makefile`.
 
 ## Done when
 
-- [ ] `make ps` shows postgres, airflow, mlflow, hapi, mailpit running
 - [ ] `make smoke`: 8/8 PASS
 - [ ] `make smoke-airflow`: task succeeds, same 8/8 in its log
 - [ ] Airflow UI shows the `m0_smoke` DAG
@@ -118,9 +113,7 @@ Without make, each target is the command written next to it in the `Makefile`.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `manifest unknown` / image not found | An image version in `.env` doesn't exist | Change `AIRFLOW_VERSION`, `HAPI_IMAGE` or `MAILPIT_IMAGE` to a tag listed on Docker Hub, `make up` again |
 | `port is already allocated` | Something else uses 5432, 8080, 5000, 8090, 8025 or 1025 | Stop the other app, or change the left side of the port mapping |
-| FHIR check fails right after `make up` | HAPI still starting | Wait 1-2 minutes, rerun `make smoke` |
 | Containers restarting or very slow | Not enough Docker memory | Raise it in Docker Desktop settings |
 | Gemini call fails, models listed | Model name in `.env` retired or misspelled | Pick a name from the smoke test's list |
 | Airflow can't find `readmit` | Project not mounted | Run `make up` from the repo folder |

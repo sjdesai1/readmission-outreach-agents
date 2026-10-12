@@ -5,10 +5,7 @@ One section per milestone. Answers written the way to say them.
 ## Milestone 0: Local stack
 
 **Q: Walk me through your local setup.**
-Docker Compose runs the full stack: Postgres, Airflow, MLflow, a HAPI FHIR server as the simulated EHR, and Mailpit to catch outgoing email. Gemini and LangSmith are the two cloud pieces. One command brings it up, and a smoke test checks each service from the laptop and from inside Airflow.
-
-**Q: Why a FHIR server instead of CSV files?**
-FHIR is how EHRs like Epic expose data. Reading patients, encounters and notes as FHIR resources, and booking FHIR Appointments, means the integration code looks like it would in a real hospital. Swapping the simulated server for a real FHIR endpoint changes a URL, not the code.
+Docker Compose runs the full stack: Postgres, Airflow, MLflow and Mailpit to catch outgoing email. Gemini and LangSmith are the two cloud pieces. One command brings it up, and a smoke test checks each service from the laptop and from inside Airflow.
 
 **Q: Airflow and your ML libraries have conflicting dependencies. How did you handle it?**
 Airflow only orchestrates. Project code runs in a separate virtual environment inside the image, and tasks call that Python directly. Airflow's pinned versions never touch XGBoost or LangGraph. In production the same idea is one container per task, for example with the KubernetesPodOperator.
@@ -26,7 +23,48 @@ One server, separate databases: Airflow metadata, MLflow tracking, and app data.
 Run metadata, params, metrics and the model registry go to Postgres. Model files and plots go to the artifact store, here a Docker volume, in production S3 or similar.
 
 **Q: What does your smoke test check, and why bother?**
-Each service independently: Postgres query, FHIR write/read/delete, an MLflow run with an artifact, an email sent and found in Mailpit, Airflow's health endpoint, Gemini model listing and a call through LiteLLM with fallback, and a LangSmith trace. It runs from the laptop and as an Airflow DAG. It catches broken wiring before any real pipeline runs, and it's the first thing I run after any infra change.
+Each service independently: Postgres query, an MLflow run with an artifact, an email sent and found in Mailpit, Airflow's health endpoint, Gemini model listing and a call through LiteLLM with fallback, and a LangSmith trace. It runs from the laptop and as an Airflow DAG. It catches broken wiring before any real pipeline runs, and it's the first thing I run after any infra change.
 
 **Q: What would change for production?**
 Managed Airflow with components split out, managed Postgres, S3 for artifacts, a BAA-covered LLM provider behind the same LiteLLM interface, secrets from a vault, LangSmith self-hosted or with PHI redaction, and Kubernetes instead of Compose.
+
+## Milestone 1: Simulated hospital, extraction, risk model
+
+**Q: How did you build the data, and why synthetic?**
+Synthetic hospital with a hidden risk formula: patients, stays, messy notes, consent. Real patient data is PHI. Synthetic also gives a known truth, so every component can be scored exactly, including a ceiling for the model.
+
+**Q: How do you define the label?**
+Unplanned admission of the same patient within 30 days of discharge. Planned procedures don't count. Labels are computed before exclusions, because a stay that ended in death can still be someone else's readmission. Each rule has a unit test.
+
+**Q: How did you prevent leakage?**
+Time-based split, never random. Prediction time is discharge + 24h, and only notes written by then are used. The data includes a post-discharge call note that reveals the outcome; the cutoff removes it. Labels only count once 30 days have passed, so August discharges are excluded from evaluation.
+
+**Q: Why use an LLM on the notes?**
+Social barriers like living alone or no transportation only live in free text. The LLM reads them in batches with a strict JSON schema, and every finding must quote the notes exactly or it's dropped. That grounding check is the defense against hallucination.
+
+**Q: How did you evaluate extraction?**
+Precision, recall and F1 per factor against an answer key of what was actually written before the cutoff. 0.993 F1. When one factor lagged, error analysis showed the label was wrong, not the model, so I fixed the data instead of tuning the prompt to match a bad label.
+
+**Q: What does your LLM client do?**
+One client for the whole project: fallback model, retries with backoff, rate limiting, a response cache, schema validation with one repair retry, LangSmith tracing, and a log of tokens, cost and latency for every call. Tested with a fake model, so no API calls in CI.
+
+**Q: Did the LLM features improve the model?**
+No, and I tested it rather than assuming. Lift was +0.003 AUROC with a bootstrap 95% CI crossing zero. The true factors didn't help either, which points to training size, not extraction quality. The features still matter operationally: the agents use the barriers to plan outreach.
+
+**Q: Why XGBoost, and how did you justify it?**
+Compared against LACE, the clinical standard (0.714), and logistic regression (0.768). XGBoost reached 0.804 against a 0.843 ceiling. Reported by new vs repeat patient, with calibration by quintile.
+
+**Q: How does the care team use the scores?**
+Fixed cut points from the test period: high = top 10%, medium = next 20%. Calling the top 30% reaches about two thirds of eventual readmissions. Everyone else still gets a check-in, because the model misses about a third. Each patient comes with top SHAP reasons and extracted barriers.
+
+**Q: How is the model deployed?**
+Registered in MLflow as readmission-risk with a champion alias. The scorer loads by alias, so promoting a new version is an alias change, no code change. Tier cut points and the feature list are stored next to the scores.
+
+**Q: How did you set up the holdout?**
+20% of flagged patients get standard care only, chosen by a hash of the patient id: deterministic, reproducible, not tied to risk. Comparing readmissions between groups is the only way to claim the outreach caused a reduction.
+
+**Q: Tell me about a bug you debugged.**
+A commit silently left files out. git check-ignore showed the pattern data/ in .gitignore matched src/readmit/data/ too. Anchored it to /data/. Found it because the commit summary said 1 file changed when I expected 3.
+
+**Q: Why did you drop the FHIR server?**
+The project is about the agents and evals, not EHR plumbing. Agents reach patient data through MCP servers backed by Postgres. In production, that one MCP server would call the hospital's FHIR API instead; nothing else changes.
