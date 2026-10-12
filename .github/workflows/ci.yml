@@ -7,6 +7,18 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:                      # real database for the integration tests
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      APP_DB_HOST: localhost
+      POSTGRES_PASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +32,7 @@ jobs:
       - name: Lint
         run: ruff check .
 
-      - name: Unit tests
+      - name: Tests (unit + Postgres integration)
         run: pytest -q
 
       - name: Validate docker-compose file

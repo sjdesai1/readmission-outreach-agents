@@ -1,6 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check \
-        world cohort extract extract-eval train score pipeline pipeline-airflow
+        world cohort extract extract-eval train score pipeline pipeline-airflow \
+        outreach-setup
 
 setup:          ## one-time: create .env and the local Python environment
 	@test -f .env || cp .env.example .env
@@ -59,3 +60,7 @@ pipeline: world cohort extract extract-eval train score   ## everything, in orde
 
 pipeline-airflow:  ## the same pipeline, run by Airflow
 	docker compose exec airflow airflow dags test m1_build_world
+
+# ---- milestone 2: outreach system of record + MCP servers ----
+outreach-setup: ## reset outreach tables, clinic calendar, sim clock; open a case per flagged discharge
+	uv run python -m readmit.outreach.setup
