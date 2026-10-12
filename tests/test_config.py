@@ -18,6 +18,6 @@ def test_env_example_has_every_setting():
     import readmit.config as cfg
     example = (cfg.REPO_ROOT / ".env.example").read_text()
     for var in ["GEMINI_API_KEY", "LANGSMITH_API_KEY", "POSTGRES_PASSWORD", "LLM_MODEL", "LLM_FALLBACK_MODEL",
-                "LLM_JUDGE_MODEL", "APP_DB_HOST", "FHIR_BASE_URL", "MLFLOW_TRACKING_URI", "SMTP_HOST",
+                "LLM_JUDGE_MODEL", "APP_DB_HOST", "MLFLOW_TRACKING_URI", "SMTP_HOST",
                 "MAILPIT_API_URL", "AIRFLOW_API_URL"]:
         assert f"{var}=" in example, f"{var} missing from .env.example"

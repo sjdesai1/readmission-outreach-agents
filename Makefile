@@ -6,7 +6,7 @@ setup:          ## one-time: create .env and the local Python environment
 	uv sync --extra dev
 
 up:             ## build and start the whole stack
-	docker compose up -d --build
+	docker compose up -d --build --remove-orphans
 
 down:           ## stop the stack, keep data
 	docker compose down

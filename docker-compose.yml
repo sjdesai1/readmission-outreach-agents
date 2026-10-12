@@ -43,7 +43,6 @@ services:
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
       # inside Docker, services are reached by service name, not localhost
       APP_DB_HOST: postgres
-      FHIR_BASE_URL: http://hapi:8080/fhir
       MLFLOW_TRACKING_URI: http://mlflow:5000
       SMTP_HOST: mailpit
       MAILPIT_API_URL: http://mailpit:8025
@@ -72,16 +71,6 @@ services:
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
 
-  # The simulated hospital EHR: a real FHIR R4 server.
-  # Data lives inside the container (H2 database); the generator reloads it anytime.
-  hapi:
-    image: ${HAPI_IMAGE}
-    environment:
-      hapi.fhir.fhir_version: R4
-      hapi.fhir.allow_multiple_delete: "true"
-      hapi.fhir.expunge_enabled: "true"
-    ports:
-      - "8090:8080"
 
   # Catches every email the agents send. Open http://localhost:8025 to read them.
   mailpit:

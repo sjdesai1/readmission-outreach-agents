@@ -43,22 +43,6 @@ def postgres():
     return version.split(",")[0]
 
 
-@check("fhir server (HAPI)")
-def fhir():
-    base = settings.fhir_base_url
-    meta = requests.get(f"{base}/metadata", timeout=60)
-    meta.raise_for_status()
-    fhir_version = meta.json().get("fhirVersion")
-    # prove write + read + delete works with a throwaway Patient
-    pid = f"smoke-{uuid.uuid4().hex[:8]}"
-    body = {"resourceType": "Patient", "id": pid, "name": [{"family": "Smoke", "given": ["Test"]}]}
-    requests.put(f"{base}/Patient/{pid}", json=body, timeout=TIMEOUT).raise_for_status()
-    got = requests.get(f"{base}/Patient/{pid}", timeout=TIMEOUT).json()
-    requests.delete(f"{base}/Patient/{pid}", timeout=TIMEOUT)
-    assert got["name"][0]["family"] == "Smoke"
-    return f"FHIR {fhir_version}, write/read/delete ok"
-
-
 @check("mlflow tracking + artifacts")
 def mlflow_check():
     import mlflow
@@ -142,7 +126,7 @@ def langsmith_key():
 
 
 def main() -> int:
-    for fn in (postgres, fhir, mlflow_check, mailpit, airflow, gemini_models, gemini_call, langsmith_key):
+    for fn in (postgres, mlflow_check, mailpit, airflow, gemini_models, gemini_call, langsmith_key):
         fn()
     width = max(len(n) for n, _, _ in results)
     print()

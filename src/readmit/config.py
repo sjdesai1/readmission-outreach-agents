@@ -23,7 +23,6 @@ class Settings:
     db_user: str = field(default_factory=lambda: _env("APP_DB_USER", "postgres"))
     db_password: str = field(default_factory=lambda: _env("POSTGRES_PASSWORD", "postgres"))
     # services
-    fhir_base_url: str = field(default_factory=lambda: _env("FHIR_BASE_URL", "http://localhost:8090/fhir"))
     mlflow_uri: str = field(default_factory=lambda: _env("MLFLOW_TRACKING_URI", "http://localhost:5000"))
     smtp_host: str = field(default_factory=lambda: _env("SMTP_HOST", "localhost"))
     smtp_port: int = field(default_factory=lambda: int(_env("SMTP_PORT", "1025")))
