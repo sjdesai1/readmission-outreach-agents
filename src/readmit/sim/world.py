@@ -10,6 +10,7 @@ How readmissions happen (the hidden policy the model has to discover):
 
 Pure functions returning DataFrames. No database code here, so it is easy to test.
 """
+import math
 from datetime import timedelta
 
 import numpy as np
@@ -159,7 +160,7 @@ class World:
     def risk_logit(e, h):
         """THE HIDDEN POLICY. The model never sees this function, only its consequences."""
         def ok(v):
-            return v == v   # False for NaN (missing lab)
+            return not math.isnan(v)   # False for a missing lab
         x = BASE_LOGIT
         x += 0.06 * min(e["length_of_stay_days"] - 4, 10)
         x += 0.12 * (e["charlson_index"] - 4)
@@ -192,7 +193,7 @@ class World:
             h["ckd"] = True
 
         _, los_typ, icu_p = DX[dx]
-        los = max(1, int(round(los_typ * self.rng.lognormal(0, 0.45) * (1 + 0.12 * max(h["frailty"], 0)))))
+        los = max(1, int(np.rint(los_typ * self.rng.lognormal(0, 0.45) * (1 + 0.12 * max(h["frailty"], 0)))))
         admit = admit.replace(hour=int(self.rng.integers(0, 24)), minute=int(self.rng.integers(0, 60)))
         discharge = (admit + timedelta(days=los)).replace(hour=int(self.rng.integers(10, 18)),
                                                           minute=int(self.rng.integers(0, 60)))
@@ -230,7 +231,7 @@ class World:
             "prior_30d_readmits_12m": int(sum(s["was_readmission"] for s in prior)),
             "hemoglobin": lab(12.6 - 1.2 * h["ckd"] - 1.0 * h["cancer"] - 1.5 * (dx == "GI bleed"), 1.6),
             "sodium": lab(138.5 - 2.5 * h["chf"], 3.3),
-            "creatinine": round(max(0.4, creat), 2) if creat == creat else creat,
+            "creatinine": creat if math.isnan(creat) else round(max(0.4, creat), 2),
             # albumin is ordered for sicker patients: missing usually means "not ordered"
             "albumin": lab(3.6 - 0.3 * max(h["frailty"], 0) - 0.3 * (dx == "Sepsis"), 0.45,
                            miss=0.65 - 0.25 * (h["frailty"] > 0.5) - 0.2 * (dx == "Sepsis")),
