@@ -38,7 +38,7 @@ PRESENT = {
 }
 
 SOCIAL_POS = {   # how each factor is written when it IS present for the patient
-    "lives_alone": ["Lives alone in apt.", "Pt lives by self, dtr out of state.", "Lives alone, no one checks on pt daily."],
+    "lives_alone": ["Lives alone in apt.", "Pt lives by self, dtr out of state.", "Lives alone in walkup apt."],
     "no_caregiver": ["No caregiver at home.", "No family/friends nearby to help."],
     "transport_barrier": ["No car, relies on bus.", "Has missed prior appts d/t no ride.", "Can't afford cab to appts."],
     "low_health_literacy": ["Teach-back incomplete, unable to restate new med schedule.",
