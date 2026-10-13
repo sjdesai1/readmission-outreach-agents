@@ -19,3 +19,6 @@ xgboost>=2.1
 
 # milestone 2: MCP servers
 fastmcp>=2.10,<3
+
+# milestone 3: multi-agent system
+langgraph>=1.0

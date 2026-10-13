@@ -28,6 +28,8 @@ class Settings:
     smtp_port: int = field(default_factory=lambda: int(_env("SMTP_PORT", "1025")))
     mailpit_api: str = field(default_factory=lambda: _env("MAILPIT_API_URL", "http://localhost:8025"))
     airflow_api: str = field(default_factory=lambda: _env("AIRFLOW_API_URL", "http://localhost:8080"))
+    # MCP servers (agents reach the outreach system only through these)
+    mcp_host: str = field(default_factory=lambda: _env("MCP_HOST", "localhost"))
     # LLM
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gemini/gemini-3.5-flash-lite"))

@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check \
         world cohort extract extract-eval train score pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector
+        outreach-setup mcp-logs inspector turn
 
 setup:          ## one-time: create .env and the local Python environment
 	@test -f .env || cp .env.example .env
@@ -70,3 +70,7 @@ mcp-logs:       ## follow the MCP servers' logs
 
 inspector:      ## open MCP Inspector (browser UI) to call any server's tools by hand
 	npx -y @modelcontextprotocol/inspector
+
+# ---- milestone 3: multi-agent graph ----
+turn:           ## one agent turn by hand: make turn c=C000856 at=2026-09-10T09:00   (add reply="yes" ch=sms)
+	uv run python -m readmit.agents.run $(c) $(if $(at),--at $(at)) $(if $(reply),--reply "$(reply)" --channel $(or $(ch),sms))

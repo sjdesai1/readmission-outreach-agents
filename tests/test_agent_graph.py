@@ -1,0 +1,102 @@
+"""The whole outreach graph, end to end, with stub agents (no LLM) and the real MCP servers in memory.
+
+Fixture patients: C1 Maria (English, email only, telehealth ok), C2 Jose (Spanish, portal/sms/phone, prefers sms).
+"""
+import asyncio
+from datetime import datetime
+
+import pytest
+
+from readmit.agents.gateway import Gateway
+from readmit.agents.graph import run_turn
+from readmit.agents.state import when
+from readmit.outreach import store
+
+pytestmark = pytest.mark.usefixtures("pg")
+
+
+def turn(case_id, reply=None, channel="sms", agents=None):
+    if reply:
+        store.record_inbound(case_id, channel, reply)
+    trigger = "inbound_reply" if reply else "outreach_due"
+    return asyncio.run(run_turn(Gateway.in_memory(), case_id, trigger, reply, channel if reply else None, agents))
+
+
+def outbound(case_id):
+    return [m for m in store.get_thread(case_id) if m["direction"] == "outbound"]
+
+
+def test_first_outreach_offers_real_slots_and_waits_for_a_reply():
+    s = turn("C1")
+    assert s["path"] == ["load_context", "care_planner", "scheduler", "message_writer", "output_checks",
+                         "safety_reviewer", "send"]
+    [msg] = outbound("C1")
+    assert msg["channel"] == "email" and when("2026-09-10T09:00") in msg["body"]
+    assert store.get_case("C1")["status"] == "awaiting_reply"
+
+
+def test_rerunning_a_turn_never_sends_twice():
+    turn("C1")
+    turn("C1")
+    assert len(outbound("C1")) == 1
+
+
+def test_yes_books_the_slot_and_confirms():
+    turn("C2")
+    s = turn("C2", "yes, the first one works")
+    assert s["schedule"]["appointment"]["status"] == "booked"
+    assert store.get_case("C2")["status"] == "booked"
+    assert "booked" in outbound("C2")[-1]["body"]
+
+
+def test_stop_closes_the_case_without_any_agent():
+    s = turn("C2", "STOP")
+    assert s["path"] == ["load_context", "input_guard", "opt_out"]
+    assert store.get_case("C2")["status"] == "opted_out"
+    assert outbound("C2")[-1]["body"].startswith("No recibirá")          # Spanish confirmation
+
+
+def test_emergency_skips_the_agents_and_alerts_a_nurse():
+    s = turn("C2", "tengo dolor de pecho")
+    assert s["path"] == ["load_context", "input_guard", "escalate"]
+    assert s["outcome"]["urgent"] and store.get_case("C2")["status"] == "escalated"
+    assert "911" in outbound("C2")[-1]["body"]
+
+
+def test_invented_time_gets_one_rewrite_then_a_nurse():
+    async def bad_writer(state, gw):
+        return {"draft": {"subject": "x", "body": "See you Fri Sep 25, 4:00 PM!"}}
+    s = turn("C1", agents={"message_writer": bad_writer})
+    assert s["path"].count("message_writer") == 2 and s["path"][-1] == "escalate"
+    assert outbound("C1") == [] and store.get_case("C1")["status"] == "escalated"
+
+
+def test_writer_fixes_its_draft_after_feedback():
+    async def writer(state, gw):
+        if state.get("problems"):
+            first = state["schedule"]["offered"][0]["when"]
+            return {"draft": {"subject": "x", "body": f"Hi Maria, open time: {first}"}}
+        return {"draft": {"subject": "x", "body": "See you Fri Sep 25, 4:00 PM!"}}
+    s = turn("C1", agents={"message_writer": writer})
+    assert s["outcome"]["action"] == "sent" and s["path"].count("message_writer") == 2
+
+
+def test_second_unclear_reply_goes_to_a_nurse():
+    turn("C2")
+    assert turn("C2", "hmm")["outcome"]["action"] == "sent"              # first time: ask again
+    assert turn("C2", "blue")["outcome"]["action"] == "escalated"        # second time: a human takes over
+
+
+def test_case_not_open_yet_is_skipped():
+    store.set_now(datetime(2026, 9, 1))
+    s = turn("C1")
+    assert s["path"] == ["load_context"] and s["skip"] == "case not open yet"
+
+
+def test_each_role_only_reaches_its_own_tools():
+    gw = Gateway.in_memory()
+    with pytest.raises(PermissionError):
+        asyncio.run(gw.scoped("message_writer").call("messaging", "send_message", case_id="C1", channel="email",
+                                                     body="hi", idempotency_key="k"))
+    with pytest.raises(PermissionError):
+        asyncio.run(gw.call("patient_data", "get_patient_summary", case_id="C1"))
