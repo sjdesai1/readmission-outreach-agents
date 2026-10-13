@@ -16,7 +16,7 @@ v1: working end to end. v2: cost optimization and a learning sequencer.
 |---|---|---|
 | 0 | Local stack: Postgres, Airflow, MLflow, Mailpit, smoke test, CI | done |
 | 1 | Simulated hospital, LLM note extraction, XGBoost risk model, live scoring | done |
-| 2 | MCP servers: patient data, scheduling, messaging, referrals, case store | |
+| 2 | MCP servers: patient data, scheduling, messaging, referrals, case store | done |
 | 3 | Multi-agent system in LangGraph: 5 agents, rule nodes, guardrails, tracing | |
 | 4 | Conversation loop: sequencer, scripted patients, channels, nurse queue, simulated days | |
 | 5 | Evals: per turn, per conversation, guardrails, red team, outcomes, prompt A/B | |
@@ -32,3 +32,5 @@ make smoke     # check every service
 ```
 
 Then run the milestone 1 pipeline: `make pipeline`
+
+Milestone 2: `make outreach-setup` (calendar, clock, cases), `make inspector` (call MCP tools by hand)

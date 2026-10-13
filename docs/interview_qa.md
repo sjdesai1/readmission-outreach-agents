@@ -68,3 +68,33 @@ A commit silently left files out. git check-ignore showed the pattern data/ in .
 
 **Q: Why did you drop the FHIR server?**
 The project is about the agents and evals, not EHR plumbing. Agents reach patient data through MCP servers backed by Postgres. In production, that one MCP server would call the hospital's FHIR API instead; nothing else changes.
+
+## Milestone 2: MCP servers
+
+**Q: What is MCP and why use it?**
+A standard protocol for giving models tools, resources and prompts. Any MCP client can discover and call the tools, so the agents aren't tied to one framework. Swapping the backend (Postgres today, FHIR in production) changes one server, not the agents.
+
+**Q: How did you split the servers?**
+Five, by business capability: patient data, scheduling, messaging, referrals, cases. Least privilege: an agent connects only to what its job needs. The message writer can't book; the scheduler can't message.
+
+**Q: Where do the business rules live?**
+In the store behind the servers, not in prompts. Consent, minimum necessary, atomic booking, idempotency, case open and closed checks. A prompt can be ignored or jailbroken; a server check can't. Defense in depth: the agent is told the rule and the server enforces it.
+
+**Q: How do you stop double booking and duplicate messages?**
+Idempotency keys on every write, unique in the database. A retry with the same key returns the original result. Booking locks the slot row and allows one active appointment per patient. The key is checked before the rules, so a retry after a timeout learns what actually happened.
+
+**Q: How does an agent learn it did something wrong?**
+Rule violations become MCP tool errors with the reason and the next step, like "already has appointment, use reschedule_appointment instead". The agent can read it and correct course instead of crashing.
+
+**Q: How do you keep PHI away from the model?**
+Minimum necessary. The summary tool returns first name, age, language, allowed channels and risk reasons. Never phone, email or last name. The messaging server looks up the address at send time, so the model sends to a case id it never resolves.
+
+**Q: How did you test the servers?**
+Store rules against a real Postgres, MCP tools through an in-memory client on the real protocol path, and CI with a Postgres service container. Then by hand in MCP Inspector.
+
+**Q: Tell me about a bug you found here.**
+In the Inspector I booked a visit dated a week before the patient's discharge. The sim clock was Sep 1; the case opened Sep 9. The server checked the slot and consent but not whether the case was open. Added the check to every write, wrote a test reproducing the exact call, confirmed the refusal live.
+
+**Q: Why HTTP instead of stdio?**
+Each server runs in its own container, like separate services owned by separate teams. Streamable HTTP lets any agent process reach them over the network. stdio is still available with --stdio for local debugging.
+
