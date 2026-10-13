@@ -3,6 +3,19 @@
 # Stop:              docker compose down        (keeps data)
 # Wipe everything:   docker compose down -v     (deletes databases)
 
+x-mcp: &mcp                  # settings shared by every MCP server
+  image: readmission-outreach-agents-app
+  pull_policy: never         # built locally by mcp-patient-data, never pulled from a registry
+  depends_on:
+    postgres:
+      condition: service_healthy
+  env_file: .env
+  environment:
+    APP_DB_HOST: postgres
+    SMTP_HOST: mailpit
+  volumes:
+    - .:/opt/project
+
 services:
 
   # One Postgres for everything. Separate databases: airflow, mlflow, app.
@@ -71,13 +84,46 @@ services:
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
 
-
   # Catches every email the agents send. Open http://localhost:8025 to read them.
   mailpit:
     image: ${MAILPIT_IMAGE}
     ports:
       - "8025:8025"   # web inbox
       - "1025:1025"   # SMTP
+
+  # ---- MCP servers: the agents' only doors into the outreach system (one container each) ----
+  mcp-patient-data:
+    <<: *mcp
+    build:                   # only this service builds the image; the other four reuse it
+      context: .
+      dockerfile: docker/app/Dockerfile
+    command: python -m readmit.mcp.patient_data
+    ports:
+      - "8101:8101"
+
+  mcp-scheduling:
+    <<: *mcp
+    command: python -m readmit.mcp.scheduling
+    ports:
+      - "8102:8102"
+
+  mcp-messaging:
+    <<: *mcp
+    command: python -m readmit.mcp.messaging
+    ports:
+      - "8103:8103"
+
+  mcp-referrals:
+    <<: *mcp
+    command: python -m readmit.mcp.referrals
+    ports:
+      - "8104:8104"
+
+  mcp-cases:
+    <<: *mcp
+    command: python -m readmit.mcp.cases
+    ports:
+      - "8105:8105"
 
 volumes:
   pgdata:

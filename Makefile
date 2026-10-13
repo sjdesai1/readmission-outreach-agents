@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check \
         world cohort extract extract-eval train score pipeline pipeline-airflow \
-        outreach-setup
+        outreach-setup mcp-logs inspector
 
 setup:          ## one-time: create .env and the local Python environment
 	@test -f .env || cp .env.example .env
@@ -64,3 +64,9 @@ pipeline-airflow:  ## the same pipeline, run by Airflow
 # ---- milestone 2: outreach system of record + MCP servers ----
 outreach-setup: ## reset outreach tables, clinic calendar, sim clock; open a case per flagged discharge
 	uv run python -m readmit.outreach.setup
+
+mcp-logs:       ## follow the MCP servers' logs
+	docker compose logs -f mcp-patient-data mcp-scheduling mcp-messaging mcp-referrals mcp-cases
+
+inspector:      ## open MCP Inspector (browser UI) to call any server's tools by hand
+	npx -y @modelcontextprotocol/inspector

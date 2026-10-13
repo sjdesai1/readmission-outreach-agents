@@ -58,10 +58,15 @@ def log_event(c, case_id: str, type_: str, detail: dict | None = None) -> None:
             case_id=case_id, at=now(c), type=type_, detail=json.dumps(detail or {}, default=str))
 
 
-def _case(c, case_id: str, lock: bool = False) -> dict:
+def _case(c, case_id: str, lock: bool = False, acting: bool = False) -> dict:
+    """Load a case. acting=True (every write) also refuses a case that hasn't opened yet on the simulation clock:
+    the patient may still be in hospital, so nobody may book, message or refer for them."""
     row = db.one(c, "select * from outreach.cases where case_id = :id" + (" for update" if lock else ""), id=case_id)
     if not row:
         raise StoreError(f"case {case_id} not found")
+    if acting and row["opened_at"] > now(c):
+        raise StoreError(f"case {case_id} is not open yet (opens {row['opened_at']:%Y-%m-%d %H:%M}); "
+                         "no actions until then")
     return row
 
 
@@ -141,7 +146,7 @@ def book_appointment(case_id: str, slot_id: str, idempotency_key: str) -> dict:
         existing = db.one(c, "select * from outreach.appointments where idempotency_key = :k", k=idempotency_key)
         if existing:
             return {**_appt_view(existing), "note": "already booked by an earlier identical request"}
-        case = _case(c, case_id, lock=True)
+        case = _case(c, case_id, lock=True, acting=True)
         if case["status"] in CLOSED_STATUSES:
             raise StoreError(f"case is {case['status']}; no booking allowed")
         pid = case["patient_id"]
@@ -245,7 +250,7 @@ def send_message(case_id: str, channel: str, body: str, idempotency_key: str, su
         existing = db.one(c, "select * from outreach.messages where idempotency_key = :k", k=idempotency_key)
         if existing:
             return {**_msg_view(existing), "note": "already sent by an earlier identical request; not sent again"}
-        case = _case(c, case_id)
+        case = _case(c, case_id, acting=True)
         if case["status"] in CLOSED_STATUSES:
             raise StoreError(f"case is {case['status']}; no messages may be sent")
         p = _patient(c, case["patient_id"])
@@ -313,7 +318,7 @@ def create_referral(case_id: str, type_: str, reason: str, idempotency_key: str)
         existing = db.one(c, "select * from outreach.referrals where idempotency_key = :k", k=idempotency_key)
         if existing:
             return {**_ref_view(existing), "note": "already requested by an earlier identical request"}
-        case = _case(c, case_id)
+        case = _case(c, case_id, acting=True)
         ref = db.one(c, """insert into outreach.referrals (referral_id, idempotency_key, case_id, patient_id, type,
                                reason, status, created_at)
                            values (:r, :k, :case_id, :p, :type, :reason, 'requested', :t) returning *""",
@@ -341,7 +346,7 @@ def update_case(case_id: str, status: str, reason: str, next_action_at: str | No
     if status not in CASE_STATUSES:
         raise StoreError(f"status must be one of {CASE_STATUSES}")
     with db.transaction() as c:
-        case = _case(c, case_id, lock=True)
+        case = _case(c, case_id, lock=True, acting=True)
         if case["status"] in CLOSED_STATUSES:
             raise StoreError(f"case is already {case['status']}")
         t = now(c)
