@@ -6,6 +6,7 @@ load_context -> input_guard -> route
         wants_visit / reschedule -> scheduler -> message_writer
         question / barrier       -> care_planner -> message_writer
         opt_out                  -> opt_out
+        third_party              -> proxy_reply  (family member: privacy-safe template, no LLM)
         symptom / abusive        -> escalate
         unclear (2nd time)       -> escalate
 message_writer -> output_checks -> safety_reviewer -> send      (one rewrite allowed, then escalate)
@@ -29,6 +30,12 @@ EMERGENCY_MSG = {
                "you shortly.",
     "Spanish": "Si tiene una emergencia médica, llame al 911 ahora. Una enfermera de su equipo de atención se "
                "comunicará con usted pronto.",
+}
+PROXY_MSG = {
+    "English": "Thank you for replying. For privacy, we can only discuss this with the person this message was "
+               "sent to. Please ask them to reply here or contact their care team.",
+    "Spanish": "Gracias por responder. Por privacidad, solo podemos hablar de esto con la persona a quien se "
+               "envió este mensaje. Pídale que responda aquí o que se comunique con su equipo de atención.",
 }
 OPT_OUT_MSG = {
     "English": "You will not receive more outreach messages from the Orchard Valley care team. "
@@ -81,8 +88,9 @@ async def input_guard(state: TurnState, gw: Gateway) -> dict:
 
 async def output_checks(state: TurnState, gw: Gateway) -> dict:
     sched = state.get("schedule") or {}
+    stay = (state.get("summary") or {}).get("stay") or {}
     problems = check_draft(state["draft"]["body"], reply_channel(state), sched.get("offered") or [],
-                           sched.get("appointment"))
+                           sched.get("appointment"), private_terms=[stay.get("diagnosis_group")])
     if problems:
         return {"problems": problems, "revisions": state.get("revisions", 0) + 1}
     return {"problems": []}
@@ -141,6 +149,23 @@ async def opt_out(state: TurnState, gw: Gateway) -> dict:
     return {"outcome": {"action": "opted_out"}}
 
 
+async def proxy_reply(state: TurnState, gw: Gateway) -> dict:
+    """Someone other than the patient replied. Fixed template: no name, no health details, no booking."""
+    cid = state["case_id"]
+    lang = (state.get("summary") or {}).get("patient", {}).get("preferred_language", "English")
+    try:
+        msg = await gw.call("messaging", "send_message", case_id=cid, channel=state["inbound_channel"],
+                            body=PROXY_MSG.get(lang, PROXY_MSG["English"]),
+                            idempotency_key=f"{state['turn_key']}:proxy")
+    except ToolFailed as e:
+        return {"escalate_reason": f"third-party reply, and the privacy reply failed: {e.message}"}
+    await gw.call("cases", "add_case_note", case_id=cid, note="third party replied; no details shared")
+    nxt = (parse_dt(state["now"]) + FOLLOW_UP_AFTER).isoformat(timespec="minutes")
+    await gw.call("cases", "update_case_status", case_id=cid, status="awaiting_reply",
+                  reason="third party replied; waiting for the patient", next_action_at=nxt)
+    return {"outcome": {"action": "proxy_reply", "message_id": msg["message_id"]}}
+
+
 def _why_escalate(state: TurnState) -> str:
     if state.get("problems"):
         return "draft failed checks twice: " + "; ".join(state["problems"])
@@ -165,7 +190,8 @@ def after_context(state: TurnState) -> str:
 
 
 def after_guard(state: TurnState) -> str:
-    return {"opt_out": "opt_out", "emergency": "escalate"}.get(state["guard"]["action"], "reply_interpreter")
+    return {"opt_out": "opt_out", "emergency": "escalate", "third_party": "proxy_reply"}.get(
+        state["guard"]["action"], "reply_interpreter")
 
 
 def after_interpreter(state: TurnState) -> str:
@@ -176,6 +202,8 @@ def after_interpreter(state: TurnState) -> str:
         return "care_planner"
     if intent == "opt_out":
         return "opt_out"
+    if intent == "third_party":
+        return "proxy_reply"
     if intent in ("symptom", "abusive"):
         return "escalate"
     if intent == "unclear" and state.get("unclear_streak", 0) >= 1:
@@ -224,7 +252,7 @@ async def _reviewer_counted(fn, state, gw):
 def build_graph(gateway: Gateway, agents: dict | None = None):
     agents = {**STUBS, **(agents or {})}
     rules = {"load_context": load_context, "input_guard": input_guard, "output_checks": output_checks,
-             "send": send, "escalate": escalate, "opt_out": opt_out}
+             "send": send, "escalate": escalate, "opt_out": opt_out, "proxy_reply": proxy_reply}
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
 
@@ -239,9 +267,9 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         g.add_node(name, node(name, fn))
     g.add_edge(START, "load_context")
     g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", END])
-    g.add_conditional_edges("input_guard", after_guard, ["opt_out", "escalate", "reply_interpreter"])
+    g.add_conditional_edges("input_guard", after_guard, ["opt_out", "escalate", "proxy_reply", "reply_interpreter"])
     g.add_conditional_edges("reply_interpreter", after_interpreter,
-                            ["scheduler", "care_planner", "opt_out", "escalate", "message_writer"])
+                            ["scheduler", "care_planner", "opt_out", "proxy_reply", "escalate", "message_writer"])
     g.add_conditional_edges("care_planner", after_planner, ["scheduler", "message_writer", "escalate"])
     g.add_conditional_edges("scheduler", after_scheduler, ["message_writer", "escalate"])
     g.add_edge("message_writer", "output_checks")
@@ -250,6 +278,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     g.add_conditional_edges("send", after_send, ["escalate", END])
     g.add_edge("escalate", END)
     g.add_edge("opt_out", END)
+    g.add_conditional_edges("proxy_reply", after_send, ["escalate", END])
     return g.compile()
 
 

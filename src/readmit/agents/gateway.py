@@ -24,6 +24,7 @@ ACCESS: dict[str, set[str]] = {
     "send": {"messaging.send_message", "cases.update_case_status", "cases.add_case_note"},
     "escalate": {"messaging.send_message", "cases.update_case_status", "cases.add_case_note"},
     "opt_out": {"messaging.send_message", "cases.update_case_status"},
+    "proxy_reply": {"messaging.send_message", "cases.add_case_note", "cases.update_case_status"},
 }
 
 

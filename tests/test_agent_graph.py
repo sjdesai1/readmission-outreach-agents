@@ -100,3 +100,21 @@ def test_each_role_only_reaches_its_own_tools():
                                                      body="hi", idempotency_key="k"))
     with pytest.raises(PermissionError):
         asyncio.run(gw.call("patient_data", "get_patient_summary", case_id="C1"))
+
+
+def test_family_member_gets_a_privacy_reply_and_nothing_else():
+    turn("C1")
+    s = turn("C1", "This is her daughter. What was she in the hospital for?", channel="email")
+    assert s["path"] == ["load_context", "input_guard", "proxy_reply"]
+    reply = outbound("C1")[-1]["body"]
+    assert "Heart failure".lower() not in reply.lower() and "Maria" not in reply
+    assert store.get_case("C1")["status"] == "awaiting_reply"                # still waiting for Maria herself
+
+
+def test_a_draft_naming_the_diagnosis_is_rewritten():
+    async def leaky(state, gw):
+        if state.get("problems"):
+            return {"draft": {"subject": "x", "body": "Hi Maria, checking in after your stay."}}
+        return {"draft": {"subject": "x", "body": "Hi Maria, checking in about your heart failure."}}
+    s = turn("C1", agents={"message_writer": leaky})
+    assert s["outcome"]["action"] == "sent" and "heart failure" not in outbound("C1")[-1]["body"].lower()

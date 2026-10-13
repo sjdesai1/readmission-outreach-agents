@@ -43,3 +43,16 @@ def test_contact_details_placeholders_and_false_booking_claims():
 def test_sms_length_limit():
     assert any("too long" in p for p in check_draft("x" * 400, "sms", [], None))
     assert check_draft("x" * 400, "email", [], None) == []
+
+
+def test_family_member_replies_are_recognised():
+    assert screen_inbound("This is his daughter, what was he admitted for?")["action"] == "third_party"
+    assert screen_inbound("hi im james's wife he's sleeping")["action"] == "third_party"
+    assert screen_inbound("Soy su hija, él está dormido")["action"] == "third_party"
+    assert screen_inbound("my daughter can drive me on tuesday")["action"] == "continue"     # patient talking
+    assert screen_inbound("this is his son, he has chest pain")["action"] == "emergency"     # emergency wins
+
+
+def test_diagnosis_never_appears_in_a_message():
+    assert check_draft("Hope your heart failure is improving!", "sms", [], None, ["Heart failure"])
+    assert check_draft("Hope you're feeling better!", "sms", [], None, ["Heart failure"]) == []

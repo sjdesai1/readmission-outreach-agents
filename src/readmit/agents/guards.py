@@ -1,7 +1,8 @@
 """Deterministic guardrails: plain rules, no LLM. They run before and after the agents.
 
-Input:  STOP keywords close the case, emergencies go straight to a nurse, injection attempts are flagged.
-Output: no invented times, no contact details, no booking claims without a booking, fits the channel.
+Input:  STOP keywords close the case, emergencies go straight to a nurse, someone other than the patient gets
+        a privacy-safe reply, injection attempts are flagged.
+Output: no invented times, no contact details, no diagnosis, no booking claims without a booking, fits the channel.
 """
 import re
 
@@ -14,6 +15,14 @@ EMERGENCY = [r"chest pain", r"can'?t breathe", r"cannot breathe", r"trouble brea
              r"passed out", r"faint(ed|ing)", r"slurred speech", r"face (is )?droop", r"stroke",
              r"suicid", r"kill myself", r"end my life", r"overdos", r"bleeding (a lot|heavily|won'?t stop)",
              r"dolor de pecho", r"no puedo respirar"]
+
+# Someone other than the patient replying (family member, friend). They get no health details.
+RELATIONS = (r"daughter|son|wife|husband|spouse|partner|mother|father|mom|dad|sister|brother|caregiver|niece|"
+             r"nephew|friend|neighbou?r|grandson|granddaughter")
+PROXY = [rf"\b(this is|i'?m|i am) (his|her|their|the patient'?s|[a-z]+'s) ({RELATIONS})\b",
+         rf"\b(his|her) ({RELATIONS}) here\b", r"\bon (his|her|their) behalf\b",
+         r"\b(he|she) (is|'s) (asleep|sleeping|not available|not here|busy)\b",
+         r"\bsoy su (hija|hijo|esposa|esposo|madre|padre|hermana|hermano|nieta|nieto)\b"]
 
 INJECTION = [r"ignore (all |any )?(previous|prior|above|your) (instructions|rules)", r"system prompt",
              r"you are now", r"developer mode", r"disregard (the|your) (rules|instructions)",
@@ -39,7 +48,8 @@ BOOKED_CLAIM_RE = re.compile(
 
 
 def screen_inbound(text: str | None) -> dict:
-    """Return {'action': 'continue' | 'opt_out' | 'emergency', 'flags': [...]}."""
+    """Return {'action': 'continue' | 'opt_out' | 'emergency' | 'third_party', 'flags': [...]}.
+    Order matters: an emergency reported by a family member is still an emergency."""
     t = (text or "").strip().lower()
     if re.sub(r"[^a-z]", "", t) in STOP_WORDS:
         return {"action": "opt_out", "flags": ["stop_keyword"]}
@@ -47,6 +57,9 @@ def screen_inbound(text: str | None) -> dict:
         if re.search(pat, t):
             return {"action": "emergency", "flags": [f"emergency:{pat}"]}
     flags = [f"injection:{pat}" for pat in INJECTION if re.search(pat, t)]
+    for pat in PROXY:
+        if re.search(pat, t):
+            return {"action": "third_party", "flags": [*flags, f"third_party:{pat}"]}
     return {"action": "continue", "flags": flags}
 
 
@@ -59,8 +72,11 @@ def _allowed_times(slots: list[dict]) -> tuple[set, set]:
     return times, dates
 
 
-def check_draft(body: str, channel: str | None, slots: list[dict], appointment: dict | None) -> list[str]:
-    """Problems with a draft, in words the writer can act on. Empty list = passes."""
+def check_draft(body: str, channel: str | None, slots: list[dict], appointment: dict | None,
+                private_terms: list[str] | None = None) -> list[str]:
+    """Problems with a draft, in words the writer can act on. Empty list = passes.
+    private_terms: words that must never appear in a message (e.g. the diagnosis): messages can be read by
+    anyone holding the phone or inbox."""
     problems = []
     body = body or ""
     if not body.strip():
@@ -70,6 +86,9 @@ def check_draft(body: str, channel: str | None, slots: list[dict], appointment: 
         problems.append(f"too long for {channel}: {len(body)} characters, limit {limit}")
     if EMAIL_RE.search(body) or PHONE_RE.search(body):
         problems.append("contains an email address or phone number; never include contact details")
+    for term in private_terms or []:
+        if term and re.search(rf"\b{re.escape(term)}\b", body, re.IGNORECASE):
+            problems.append(f"mentions a private health detail ({term}); keep messages free of diagnoses")
     if PLACEHOLDER_RE.search(body):
         problems.append("contains an unfilled placeholder like [Name]")
     known = slots + ([appointment] if appointment else [])
