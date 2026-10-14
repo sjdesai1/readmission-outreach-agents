@@ -17,7 +17,7 @@ from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.state import TurnState, reply_channel
 from readmit.llm import LLMError, complete_json, load_prompt
 
-PROMPTS = {"interpret_reply": "v1", "plan_care": "v1", "write_message": "v1"}
+PROMPTS = {"interpret_reply": "v1", "plan_care": "v1", "write_message": "v2"}   # v2: label video vs clinic
 MIN_CONFIDENCE = 0.5
 
 Intent = Literal["wants_visit", "reschedule", "question", "clinical_question", "barrier", "decline", "opt_out",
@@ -156,9 +156,11 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         "channel": reply_channel(state),
         "language": s["patient"]["preferred_language"],
         "patient_name_token": s["patient"]["first_name"],
-        "offered_slots": [{"option": i, "when": x["when"], "mode": x["mode"], "with": x["provider"]}
+        "offered_slots": [{"option": i, "when": x["when"],
+                           "how": "video visit" if x["mode"] == "telehealth" else "in the clinic", "with": x["provider"]}
                           for i, x in enumerate(sched.get("offered") or [], 1)],
-        "appointment": ({"when": sched["appointment"]["when"], "mode": sched["appointment"]["mode"],
+        "appointment": ({"when": sched["appointment"]["when"],
+                         "how": "video visit" if sched["appointment"]["mode"] == "telehealth" else "in the clinic",
                          "video_link_sent_separately": bool(sched["appointment"].get("video_link"))}
                         if sched.get("appointment") else None),
         "talking_points": plan.get("talking_points") or [],
