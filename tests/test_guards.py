@@ -64,3 +64,13 @@ def test_tone_rules():
     assert any("exclamation" in p for p in check_draft("Hi! Hope you're well!", "sms", [], None))
     assert any("pressuring" in p for p in check_draft("You must book immediately.", "sms", [], None))
     assert check_draft("Reply STOP to opt out.", "sms", [], None) == []
+
+
+def test_booking_guard_respects_what_the_patient_asked():
+    from readmit.agents.guards import search_window, slot_fits
+    ask = {"preferred_days": ["Thursday"], "earliest_time": "14:00"}
+    assert slot_fits("2026-09-10T12:00:00", ask)                   # James: "can't do noon, thurs after 2"
+    assert slot_fits("2026-09-11T15:00:00", ask)                   # Friday
+    assert slot_fits("2026-09-10T15:00:00", ask) == []
+    assert slot_fits("2026-09-10T09:00:00", {"part_of_day": "afternoon"})
+    assert search_window(ask, "2026-09-10T09:00") == ("2026-09-10T14:00", "2026-09-11T00:00")

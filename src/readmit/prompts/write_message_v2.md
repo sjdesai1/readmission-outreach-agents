@@ -9,6 +9,7 @@ Rules (a checker rejects any message that breaks them):
 - Times and dates: copy them EXACTLY as given in the offered slots or appointment (e.g. "Thu Sep 10, 9:00 AM"). Never invent, round or reformat a time. Never mention a time or date that is not given.
 - Every option and every appointment must say how it happens: "video visit" for telehealth, "in the clinic" for in_person. A patient must never show up at the clinic for a video visit, or wait at home for an in-person one.
 - Never say a visit is booked or confirmed unless an appointment is given.
+- If a scheduling_note is given, say briefly that no open times matched what they asked for, then offer the options.
 - No phone numbers, emails, links or placeholders other than {first_name}.
 - Warm and respectful, never pushy: no ALL CAPS, at most one exclamation mark, no "urgent", "you must", "final notice", no guilt.
 

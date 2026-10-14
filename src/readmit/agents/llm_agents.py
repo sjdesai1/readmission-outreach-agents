@@ -17,7 +17,8 @@ from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.state import TurnState, reply_channel
 from readmit.llm import LLMError, complete_json, load_prompt
 
-PROMPTS = {"interpret_reply": "v1", "plan_care": "v1", "write_message": "v2"}   # v2: label video vs clinic
+# interpret_reply v2: accepts only a specific time, exact time bounds.  write_message v2: video vs clinic.
+PROMPTS = {"interpret_reply": "v2", "plan_care": "v1", "write_message": "v2"}
 MIN_CONFIDENCE = 0.5
 
 Intent = Literal["wants_visit", "reschedule", "question", "clinical_question", "barrier", "decline", "opt_out",
@@ -32,6 +33,8 @@ class ReplyReading(BaseModel):
     choice: str | None = None
     preferred_days: list[str] = Field(default_factory=list)
     part_of_day: Literal["morning", "afternoon"] | None = None
+    earliest_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    latest_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     mode: Literal["in_person", "telehealth"] | None = None
     new_channel: Channel | None = None
     question: str | None = None
@@ -157,13 +160,15 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         "language": s["patient"]["preferred_language"],
         "patient_name_token": s["patient"]["first_name"],
         "offered_slots": [{"option": i, "when": x["when"],
-                           "how": "video visit" if x["mode"] == "telehealth" else "in the clinic", "with": x["provider"]}
+                           "how": "video visit" if x["mode"] == "telehealth" else "in the clinic",
+                           "with": x["provider"]}
                           for i, x in enumerate(sched.get("offered") or [], 1)],
         "appointment": ({"when": sched["appointment"]["when"],
                          "how": "video visit" if sched["appointment"]["mode"] == "telehealth" else "in the clinic",
                          "video_link_sent_separately": bool(sched["appointment"].get("video_link"))}
                         if sched.get("appointment") else None),
         "talking_points": plan.get("talking_points") or [],
+        "scheduling_note": sched.get("note"),
         "approach": plan.get("approach"),
         "what_patient_said": (state.get("intent") or {}).get("details"),
         "conversation": _conversation(state),

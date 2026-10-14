@@ -6,6 +6,7 @@ Output: no invented times, no contact details, no diagnosis, no booking claims w
         respectful tone (no shouting, no pressure).
 """
 import re
+from datetime import datetime, timedelta
 
 from readmit.agents.state import parse_dt
 
@@ -122,3 +123,53 @@ def check_draft(body: str, channel: str | None, slots: list[dict], appointment: 
     if not appointment and BOOKED_CLAIM_RE.search(body):
         problems.append("says the visit is booked or confirmed, but nothing was booked")
     return list(dict.fromkeys(problems))     # dedupe, keep order
+
+
+# ------------------------------------------------------------------ booking guard
+WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+            "lun": 0, "mar": 1, "mie": 2, "mié": 2, "jue": 3, "vie": 4, "sáb": 5, "sab": 5, "dom": 6}
+
+
+def requested_weekdays(details: dict) -> set[int]:
+    days = set()
+    for d in details.get("preferred_days") or []:
+        key = d.strip().lower()[:3]
+        if key in WEEKDAYS:
+            days.add(WEEKDAYS[key])
+    return days
+
+
+def _hhmm(t: str | None) -> tuple[int, int] | None:
+    if not t:
+        return None
+    h, m = t.split(":")
+    return int(h), int(m)
+
+
+def slot_fits(start_at, details: dict) -> list[str]:
+    """Why a slot contradicts what the patient asked for. Empty = it fits. Checked before ANY booking."""
+    dt = start_at if isinstance(start_at, datetime) else parse_dt(start_at)
+    problems = []
+    days = requested_weekdays(details)
+    if days and dt.weekday() not in days:
+        problems.append(f"patient asked for {details['preferred_days']}, slot is a {dt:%A}")
+    if (e := _hhmm(details.get("earliest_time"))) and (dt.hour, dt.minute) < e:
+        problems.append(f"patient can't do before {details['earliest_time']}, slot is {dt:%H:%M}")
+    if (lt := _hhmm(details.get("latest_time"))) and (dt.hour, dt.minute) >= lt:
+        problems.append(f"patient can't do from {details['latest_time']}, slot is {dt:%H:%M}")
+    pod = details.get("part_of_day")
+    if pod == "morning" and dt.hour >= 12 or pod == "afternoon" and dt.hour < 12:
+        problems.append(f"patient asked for {pod}, slot is {dt:%H:%M}")
+    return problems
+
+
+def search_window(details: dict, now: str) -> tuple[str | None, str | None]:
+    """Earliest/latest datetimes for find_slots from the patient's request (next matching weekday)."""
+    days = requested_weekdays(details)
+    if not days:
+        return None, None
+    today = parse_dt(now).replace(hour=0, minute=0, second=0, microsecond=0)
+    day = next(today + timedelta(days=i) for i in range(7) if (today + timedelta(days=i)).weekday() in days)
+    e = _hhmm(details.get("earliest_time")) or (0, 0)
+    return (day.replace(hour=e[0], minute=e[1]).isoformat(timespec="minutes"),
+            (day + timedelta(days=1)).isoformat(timespec="minutes"))

@@ -6,6 +6,7 @@ are spent. Steps 2-4 replace them one by one with real agents that have the same
 import re
 
 from readmit.agents.gateway import Gateway, ToolFailed
+from readmit.agents.guards import search_window, slot_fits
 from readmit.agents.state import TurnState, when
 
 
@@ -32,18 +33,26 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
 
 async def scheduler(state: TurnState, gw: Gateway) -> dict:
     case_id, intent = state["case_id"], state.get("intent") or {}
+    details = intent.get("details") or {}
+    note = None
     try:
-        slots = await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or []
+        earliest, latest = search_window(details, state["now"])
+        found = await gw.call("scheduling", "find_slots", case_id=case_id, earliest=earliest, latest=latest,
+                              part_of_day=details.get("part_of_day"), limit=10) or []
+        fitting = [s for s in found if not slot_fits(s["start_at"], details)][:3]
+        if not fitting:      # nothing matches the request: offer the closest options and say so
+            fitting = (await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or [])
+            note = "no open times match what the patient asked for; these are the closest options"
         offered = [{"slot_id": s["slot_id"], "start_at": s["start_at"], "when": when(s["start_at"]),
-                    "mode": s["mode"], "provider": s["provider"]} for s in slots]
+                    "mode": s["mode"], "provider": s["provider"]} for s in fitting]
         appointment = None
-        if intent.get("accepts") and offered:
+        if intent.get("accepts") and offered and not note and not slot_fits(offered[0]["start_at"], details):
             appointment = await gw.call("scheduling", "book_appointment", case_id=case_id,
                                         slot_id=offered[0]["slot_id"], idempotency_key=f"{state['turn_key']}:book")
             appointment["when"] = when(appointment["start_at"])
     except ToolFailed as e:
         return {"schedule": {"offered": [], "appointment": None, "error": e.message}}
-    return {"schedule": {"offered": offered, "appointment": appointment, "error": None}}
+    return {"schedule": {"offered": offered, "appointment": appointment, "error": None, "note": note}}
 
 
 async def message_writer(state: TurnState, gw: Gateway) -> dict:

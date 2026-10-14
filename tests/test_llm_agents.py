@@ -111,3 +111,23 @@ def test_writer_gets_checker_feedback_on_rewrite(fake_llm):
     assert s["outcome"]["action"] == "sent"
     rewrite = json.loads([p for p in prompts if p["task"] == "write_message"][1]["user"])
     assert any("ALL CAPS" in f for f in rewrite["checker_feedback"])
+
+
+def test_never_books_a_time_the_patient_ruled_out(fake_llm):
+    answers, _ = fake_llm
+    answers |= {"interpret_reply": {"intent": "wants_visit", "accepts_offer": True, "preferred_days": ["Thursday"],
+                                    "earliest_time": "14:00", "confidence": 0.9},
+                "write_message": offer}
+    s = turn("C1", "cant do 9, anything thursday after 2?")        # fixture slots are all at 9:00
+    assert s["schedule"]["appointment"] is None and s["schedule"]["note"]
+    assert store.get_case("C1")["status"] != "booked"
+
+
+def test_books_when_the_choice_fits(fake_llm):
+    answers, _ = fake_llm
+    answers |= {"interpret_reply": {"intent": "wants_visit", "accepts_offer": True, "preferred_days": ["Friday"],
+                                    "part_of_day": "morning", "choice": "friday morning", "confidence": 0.9},
+                "write_message": lambda u: {"subject": "Booked",
+                                            "body": f"You're booked for {u['appointment']['when']}."}}
+    s = turn("C1", "friday morning works")
+    assert s["schedule"]["appointment"]["when"].startswith("Fri Sep 11")
