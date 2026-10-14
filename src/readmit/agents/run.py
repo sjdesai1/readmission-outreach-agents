@@ -7,6 +7,7 @@
 --at moves the simulation clock first. --reply records the patient's message (as the simulator would), then
 runs an inbound turn. Prints the path through the graph, the message, and what the turn did.
 """
+
 import argparse
 import asyncio
 import json
@@ -33,8 +34,16 @@ def main() -> None:
     if args.reply:
         store.record_inbound(args.case_id, args.channel, args.reply)
 
-    s = asyncio.run(run_turn(Gateway.http(), args.case_id, trigger, args.reply,
-                             args.channel if args.reply else None, agents=None if args.stub else LLM_AGENTS))
+    s = asyncio.run(
+        run_turn(
+            Gateway.http(),
+            args.case_id,
+            trigger,
+            args.reply,
+            args.channel if args.reply else None,
+            agents=None if args.stub else LLM_AGENTS,
+        )
+    )
     print(f"  clock    {s.get('now')}")
     print(f"  path     {' -> '.join(s.get('path', []))}")
     if s.get("skip"):

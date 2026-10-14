@@ -97,4 +97,3 @@ In the Inspector I booked a visit dated a week before the patient's discharge. T
 
 **Q: Why HTTP instead of stdio?**
 Each server runs in its own container, like separate services owned by separate teams. Streamable HTTP lets any agent process reach them over the network. stdio is still available with --stdio for local debugging.
-

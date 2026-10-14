@@ -1,4 +1,5 @@
 """Metrics that match how the model is used: a care team can only call the top slice of patients."""
+
 import numpy as np
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
@@ -39,8 +40,13 @@ def calibration_table(y, prob, bins=5) -> list[dict]:
     order = np.argsort(prob)
     rows = []
     for chunk in np.array_split(order, bins):
-        rows.append({"predicted": round(float(prob[chunk].mean()), 3), "observed": round(float(y[chunk].mean()), 3),
-                     "n": len(chunk)})
+        rows.append(
+            {
+                "predicted": round(float(prob[chunk].mean()), 3),
+                "observed": round(float(y[chunk].mean()), 3),
+                "n": len(chunk),
+            }
+        )
     return rows
 
 

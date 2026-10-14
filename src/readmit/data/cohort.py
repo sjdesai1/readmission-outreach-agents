@@ -7,6 +7,7 @@ Reads sim.* and truth.note_facts. Writes:
   cohort.notes        notes written by prediction time (discharge + 24h)
   truth.documented    per stay, which social factors those notes actually mention (extraction answer key)
 """
+
 import json
 
 import pandas as pd
@@ -40,7 +41,7 @@ def add_labels(enc: pd.DataFrame) -> pd.DataFrame:
 
 def assign_split(enc: pd.DataFrame) -> pd.Series:
     d = enc["discharge_datetime"]
-    split = pd.Series("gap", index=enc.index)        # labels not mature by go-live: unused
+    split = pd.Series("gap", index=enc.index)  # labels not mature by go-live: unused
     split[d < clock.TRAIN_END] = "train"
     split[(d >= clock.TRAIN_END) & (d < clock.TEST_END)] = "test"
     split[enc["outcome_pending"]] = "live"
@@ -58,7 +59,7 @@ def build(enc: pd.DataFrame, notes: pd.DataFrame, note_facts: pd.DataFrame):
     enc = enc[~excluded].copy()
 
     enc["split"] = assign_split(enc)
-    enc.loc[enc["split"] == "live", ["readmit_30d", "days_to_next_unplanned"]] = pd.NA   # not decided yet
+    enc.loc[enc["split"] == "live", ["readmit_30d", "days_to_next_unplanned"]] = pd.NA  # not decided yet
     train_patients = set(enc.loc[enc["split"] == "train", "patient_id"])
     enc["patient_status"] = enc["patient_id"].map(lambda p: "repeat" if p in train_patients else "new")
     enc.loc[enc["split"] == "train", "patient_status"] = "train"
@@ -74,8 +75,9 @@ def build(enc: pd.DataFrame, notes: pd.DataFrame, note_facts: pd.DataFrame):
 
     # answer key: social factors actually written in the kept notes
     facts = note_facts[note_facts["note_id"].isin(set(kept["note_id"]))]
-    documented = (pd.crosstab(facts["encounter_id"], facts["factor"]) > 0).reindex(columns=SOCIAL_FACTORS,
-                                                                                  fill_value=False)
+    documented = (pd.crosstab(facts["encounter_id"], facts["factor"]) > 0).reindex(
+        columns=SOCIAL_FACTORS, fill_value=False
+    )
     documented = documented.reindex(enc["encounter_id"], fill_value=False).reset_index()
     documented.columns = ["encounter_id"] + SOCIAL_FACTORS
 
@@ -86,17 +88,20 @@ def build(enc: pd.DataFrame, notes: pd.DataFrame, note_facts: pd.DataFrame):
             "patients": int(part["patient_id"].nunique()),
             "readmit_rate": None if s == "live" else round(float(part["readmit_30d"].astype(float).mean()), 3),
             "discharges": [str(part["discharge_datetime"].min().date()), str(part["discharge_datetime"].max().date())]
-            if len(part) else None,
+            if len(part)
+            else None,
         }
     test = enc[enc["split"] == "test"]
     report["test_readmit_rate_by_patient_status"] = (
-        test.groupby("patient_status")["readmit_30d"].apply(lambda s: round(float(s.astype(float).mean()), 3)).to_dict())
+        test.groupby("patient_status")["readmit_30d"].apply(lambda s: round(float(s.astype(float).mean()), 3)).to_dict()
+    )
     report["documented_factor_rate"] = documented[SOCIAL_FACTORS].mean().round(3).to_dict()
     return enc, kept, documented, report
 
 
 def main():
     from readmit import db
+
     enc = db.read("select * from sim.encounters")
     notes = db.read("select * from sim.notes")
     facts = db.read("select * from truth.note_facts")

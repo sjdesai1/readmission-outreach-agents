@@ -1,7 +1,8 @@
 """MCP server: outreach case records.
 
-    python -m readmit.mcp.cases                 # http://localhost:8105/mcp
+python -m readmit.mcp.cases                 # http://localhost:8105/mcp
 """
+
 from typing import Annotated, Literal
 
 from fastmcp import FastMCP
@@ -13,12 +14,26 @@ from readmit.outreach import store
 mcp = FastMCP(
     name="cases",
     instructions="Read and update outreach cases. Every change is written to the case's audit log. "
-                 "Closed cases (completed, opted_out, readmitted, closed, suppressed) cannot be reopened.",
+    "Closed cases (completed, opted_out, readmitted, closed, suppressed) cannot be reopened.",
 )
 
 CaseId = Annotated[str, Field(description="Outreach case id, e.g. C000856")]
-Status = Literal["new", "suppressed", "planned", "contacted", "awaiting_reply", "booking", "booked", "reminded",
-                 "completed", "no_show", "escalated", "opted_out", "readmitted", "closed"]
+Status = Literal[
+    "new",
+    "suppressed",
+    "planned",
+    "contacted",
+    "awaiting_reply",
+    "booking",
+    "booked",
+    "reminded",
+    "completed",
+    "no_show",
+    "escalated",
+    "opted_out",
+    "readmitted",
+    "closed",
+]
 
 
 @mcp.tool(annotations=READ_ONLY)

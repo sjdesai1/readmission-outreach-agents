@@ -9,6 +9,7 @@ Schemas (namespaces inside the `app` database):
   ops      operational logs: every LLM call with tokens, cost, latency
   outreach cases, messages, appointments, referrals, clinic calendar (see outreach/schema.sql)
 """
+
 from contextlib import contextmanager
 from functools import lru_cache
 

@@ -1,7 +1,8 @@
 """MCP server: patient data, read only, minimum necessary.
 
-    python -m readmit.mcp.patient_data          # http://localhost:8101/mcp
+python -m readmit.mcp.patient_data          # http://localhost:8101/mcp
 """
+
 import json
 from typing import Annotated
 
@@ -14,8 +15,8 @@ from readmit.outreach import store
 mcp = FastMCP(
     name="patient_data",
     instructions="Patient context for outreach, minimum necessary: first name, language, allowed channels, the "
-                 "recent stay, risk drivers and barriers. Contact details (phone, email) are never returned; the "
-                 "messaging server handles delivery. verify_identity checks a year of birth without revealing it.",
+    "recent stay, risk drivers and barriers. Contact details (phone, email) are never returned; the "
+    "messaging server handles delivery. verify_identity checks a year of birth without revealing it.",
 )
 
 CaseId = Annotated[str, Field(description="Outreach case id, e.g. C000856")]

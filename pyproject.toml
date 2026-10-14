@@ -6,7 +6,7 @@ requires-python = ">=3.11,<3.12"
 dynamic = ["dependencies"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff==0.17.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff==0.17.0", "pre-commit>=4.0", "pyright>=1.1.400"]
 
 [build-system]
 requires = ["setuptools>=69"]
@@ -21,6 +21,20 @@ where = ["src"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+
+[tool.coverage.run]
+source = ["src/readmit"]
+omit = ["src/readmit/smoke.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

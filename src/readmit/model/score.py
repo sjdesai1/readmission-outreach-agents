@@ -5,6 +5,7 @@
 Writes scoring.scores: one row per live stay. The conversation-loop milestone reads it day by day
 (each stay becomes visible at its prediction time = discharge + 24h).
 """
+
 import hashlib
 import json
 
@@ -48,34 +49,43 @@ def main():
     X = features.build(live, social).reindex(columns=cols, fill_value=0)
 
     prob = model.predict_proba(X)[:, 1]
-    contribs = model.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)[:, :-1]   # last column = bias
+    contribs = model.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)[:, :-1]  # last column = bias
 
     soc = social.set_index("encounter_id")
     rows = []
     for i, r in enumerate(live.itertuples()):
         t = tier(prob[i], meta["tier_cut_high"], meta["tier_cut_medium"])
         barriers = [f for f in SOCIAL_FACTORS if r.encounter_id in soc.index and bool(soc.at[r.encounter_id, f])]
-        rows.append({
-            "encounter_id": r.encounter_id, "patient_id": r.patient_id,
-            "discharge_datetime": r.discharge_datetime, "prediction_time": r.prediction_time,
-            "risk": round(float(prob[i]), 4), "tier": t,
-            "flagged": t in ("high", "medium"),
-            "holdout": t in ("high", "medium") and in_holdout(r.patient_id),
-            "top_drivers": json.dumps(top_drivers(contribs[i], cols)),
-            "barriers": json.dumps(barriers),
-            "model_version": meta["model_version"],
-        })
+        rows.append(
+            {
+                "encounter_id": r.encounter_id,
+                "patient_id": r.patient_id,
+                "discharge_datetime": r.discharge_datetime,
+                "prediction_time": r.prediction_time,
+                "risk": round(float(prob[i]), 4),
+                "tier": t,
+                "flagged": t in ("high", "medium"),
+                "holdout": t in ("high", "medium") and in_holdout(r.patient_id),
+                "top_drivers": json.dumps(top_drivers(contribs[i], cols)),
+                "barriers": json.dumps(barriers),
+                "model_version": meta["model_version"],
+            }
+        )
     scores = pd.DataFrame(rows)
     db.write(scores, "scoring.scores")
 
     flagged = scores[scores["flagged"]]
     print(f"  scored {len(scores)} live stays with {meta['model_name']} v{meta['model_version']}")
     print(f"  tiers: {scores['tier'].value_counts().to_dict()}")
-    print(f"  flagged {len(flagged)}: {int((~flagged['holdout']).sum())} to outreach, "
-          f"{int(flagged['holdout'].sum())} holdout")
+    print(
+        f"  flagged {len(flagged)}: {int((~flagged['holdout']).sum())} to outreach, "
+        f"{int(flagged['holdout'].sum())} holdout"
+    )
     ex = flagged.sort_values("risk", ascending=False).iloc[0]
-    print(f"  highest risk: {ex['encounter_id']} risk {ex['risk']:.2f}, drivers {ex['top_drivers']}, "
-          f"barriers {ex['barriers']}")
+    print(
+        f"  highest risk: {ex['encounter_id']} risk {ex['risk']:.2f}, drivers {ex['top_drivers']}, "
+        f"barriers {ex['barriers']}"
+    )
 
 
 if __name__ == "__main__":

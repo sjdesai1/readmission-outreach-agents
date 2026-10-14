@@ -5,6 +5,7 @@
 
 Rebuilds everything from scratch each run (same seed = same world).
 """
+
 import argparse
 
 from readmit import db
@@ -25,8 +26,10 @@ def main():
 
     enc = tables["sim.encounters"].drop_duplicates("encounter_id")
     pts = tables["sim.patients"]
-    print(f"\n  patients {len(pts)} | stays {len(enc)} (history {int((~enc.outcome_pending).sum())}, "
-          f"live {int(enc.outcome_pending.sum())}) | notes {len(tables['sim.notes'])}")
+    print(
+        f"\n  patients {len(pts)} | stays {len(enc)} (history {int((~enc.outcome_pending).sum())}, "
+        f"live {int(enc.outcome_pending.sum())}) | notes {len(tables['sim.notes'])}"
+    )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -22,18 +23,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
+          enable-cache: true
 
-      - name: Install
-        run: pip install -e ".[dev]"
+      - name: Install (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
 
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
 
-      - name: Tests (unit + Postgres integration)
-        run: pytest -q
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Tests with coverage (unit + Postgres integration)
+        run: uv run pytest -q --cov --cov-report=term-missing:skip-covered
 
       - name: Validate docker-compose file
         run: cp .env.example .env && docker compose config --quiet
+
+      # report-only for now: tracked in an issue and tightened over time
+      - name: Type check (report only)
+        continue-on-error: true
+        run: uv run pyright
+
+      - name: Dependency audit (report only)
+        continue-on-error: true
+        run: |
+          uv export --frozen --no-hashes --no-emit-project > requirements-locked.txt
+          uvx pip-audit -r requirements-locked.txt --no-deps --disable-pip

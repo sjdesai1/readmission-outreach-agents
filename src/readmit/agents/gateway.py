@@ -1,8 +1,9 @@
 """The agents' only way into the outreach system: MCP tool calls, scoped per role (least privilege).
 
-    Gateway.http()        the five MCP servers over HTTP (the running stack)
-    Gateway.in_memory()   the same servers in-process (tests; same protocol, no network)
+Gateway.http()        the five MCP servers over HTTP (the running stack)
+Gateway.in_memory()   the same servers in-process (tests; same protocol, no network)
 """
+
 import json
 
 from fastmcp import Client
@@ -13,16 +14,28 @@ from readmit.mcp.common import PORTS
 
 # Which tools each role may call. Anything not listed is refused before it reaches a server.
 ACCESS: dict[str, set[str]] = {
-    "load_context": {"patient_data.get_patient_summary", "cases.get_case", "messaging.get_thread",
-                     "scheduling.get_current_time"},
+    "load_context": {
+        "patient_data.get_patient_summary",
+        "cases.get_case",
+        "messaging.get_thread",
+        "scheduling.get_current_time",
+    },
     "care_planner": {"patient_data.get_patient_summary", "referrals.create_referral"},
     "reply_interpreter": set(),
-    "scheduler": {"scheduling.get_current_time", "scheduling.find_slots", "scheduling.book_appointment",
-                  "scheduling.reschedule_appointment"},
+    "scheduler": {
+        "scheduling.get_current_time",
+        "scheduling.find_slots",
+        "scheduling.book_appointment",
+        "scheduling.reschedule_appointment",
+    },
     "message_writer": set(),
     "safety_reviewer": set(),
-    "send": {"patient_data.get_patient_summary", "messaging.send_message", "cases.update_case_status",
-             "cases.add_case_note"},
+    "send": {
+        "patient_data.get_patient_summary",
+        "messaging.send_message",
+        "cases.update_case_status",
+        "cases.add_case_note",
+    },
     "escalate": {"messaging.send_message", "cases.update_case_status", "cases.add_case_note"},
     "opt_out": {"messaging.send_message", "cases.update_case_status"},
     "proxy_reply": {"messaging.send_message", "cases.add_case_note", "cases.update_case_status"},
@@ -41,8 +54,8 @@ class ToolFailed(Exception):
 
 class Gateway:
     def __init__(self, targets: dict, role: str | None = None):
-        self.targets = targets          # server name -> URL or in-process FastMCP server
-        self.role = role                # None: unscoped, may call nothing
+        self.targets = targets  # server name -> URL or in-process FastMCP server
+        self.role = role  # None: unscoped, may call nothing
 
     @classmethod
     def http(cls, host: str | None = None) -> "Gateway":
@@ -52,6 +65,7 @@ class Gateway:
     @classmethod
     def in_memory(cls) -> "Gateway":
         from readmit.mcp import cases, messaging, patient_data, referrals, scheduling
+
         return cls({m.mcp.name: m.mcp for m in (patient_data, scheduling, messaging, referrals, cases)})
 
     def scoped(self, role: str) -> "Gateway":
@@ -73,4 +87,4 @@ class Gateway:
         try:
             return json.loads(text)
         except ValueError:
-            return text                 # plain-string results, e.g. get_current_time
+            return text  # plain-string results, e.g. get_current_time
