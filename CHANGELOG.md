@@ -16,6 +16,9 @@ each minor version is a finished milestone.
 - Repo hygiene: pre-commit (ruff, gitleaks), PR and issue templates, license, coverage, type check and
   dependency audit in CI, Dependabot
 
+### Docs
+- Architecture decision records (docs/decisions) and the first postmortem (docs/postmortems)
+
 ### Fixed
 - Agents booked a time the patient had ruled out ("can't do noon" booked noon)
 - Actions were possible on a case before it opened (booking dated before discharge)

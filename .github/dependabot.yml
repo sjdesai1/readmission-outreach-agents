@@ -12,3 +12,9 @@ updates:
     directories: ["/docker/app", "/docker/airflow", "/docker/mlflow"]
     schedule:
       interval: weekly
+    ignore:
+      # the project is pinned to Python 3.11 and Airflow 3.1: version jumps are deliberate migrations, not bumps
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "apache/airflow"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
