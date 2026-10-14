@@ -31,6 +31,8 @@ class TurnState(TypedDict, total=False):
     problems: list[str]                 # output check failures (fed back to the writer)
     review: dict                        # safety reviewer: verdict, reasons
     revisions: int
+    reply_on: str | None                # channel the patient just switched to (overrides the inbound channel)
+    channel_change: dict                # result of a requested channel change
     escalate_reason: str | None
     urgent: bool
     outcome: dict                       # what the turn finally did
@@ -48,7 +50,9 @@ def when(start_at) -> str:
 
 
 def reply_channel(state: TurnState) -> str | None:
-    """Answer on the channel the patient used; otherwise the planner's choice."""
+    """Answer on the channel the patient asked for, else the one they used, else the planner's choice."""
+    if state.get("reply_on"):
+        return state["reply_on"]
     if state.get("trigger") == "inbound_reply" and state.get("inbound_channel"):
         return state["inbound_channel"]
     return (state.get("plan") or {}).get("channel")

@@ -32,7 +32,7 @@ def test_each_server_exposes_only_its_own_tools():
                                       "reschedule_appointment"]
     assert tool_names(messaging) == ["get_thread", "send_message"]
     assert tool_names(referrals) == ["create_referral"]
-    assert tool_names(cases) == ["add_case_note", "get_case", "update_case_status"]
+    assert tool_names(cases) == ["add_case_note", "get_case", "set_preferred_channel", "update_case_status"]
 
 
 def test_summary_through_mcp():

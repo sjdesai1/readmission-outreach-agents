@@ -4,7 +4,11 @@ Rules enforced here, not in prompts (an agent can't talk its way around them):
   * minimum necessary: agents get a patient summary, never phone numbers or email addresses
   * booking: slot must exist, be open and in the future; one active appointment per patient;
     telehealth only with telehealth consent and a capable device; atomic (no double booking)
-  * messaging: only channels the patient opted into; nothing to opted-out or closed cases
+  * messaging: only channels the patient opted into; nothing to opted-out or closed cases; no outreach during
+    quiet hours (held until 8 AM), except safety messages
+  * scheduling: the patient's own doctor, a provider who speaks their language, and the follow-up deadline
+    for their diagnosis rank first
+  * consent: a channel change is recorded only if the contact detail exists, with an audit event
   * idempotency: retrying a booking, message or referral with the same key returns the original
   * audit: every action writes an event on the case
 """
@@ -24,6 +28,11 @@ CASE_STATUSES = ("new", "suppressed", "planned", "contacted", "awaiting_reply", 
                  "completed", "no_show", "escalated", "opted_out", "readmitted", "closed")
 CLOSED_STATUSES = ("suppressed", "completed", "opted_out", "readmitted", "closed")
 MIN_LEAD = timedelta(hours=2)          # can't book a slot starting in less than 2 hours
+QUIET_HOURS = (20, 8)                  # no outreach from 8 PM to 8 AM (patient's local time)
+FAST_FOLLOW_UP = {"Heart failure": 7, "COPD exacerbation": 7, "Acute MI": 7, "Sepsis": 7}   # days; others 14
+PRIORITIES = ("normal", "safety")
+CONSENT_SQL = {ch: f"update sim.patients set {ch}_opt_in = true, preferred_channel = :ch where patient_id = :p"
+               for ch in CHANNELS}   # fixed statements, one per known channel: no user text ever reaches the SQL
 SENDER = "care-team@orchardvalley.example"
 
 
@@ -88,6 +97,7 @@ def patient_summary(case_id: str) -> dict:
                             from cohort.stays where encounter_id = :e""", e=case["encounter_id"])
         score = db.one(c, "select risk, tier, top_drivers, barriers from scoring.scores where encounter_id = :e",
                        e=case["encounter_id"])
+        pcp = db.one(c, "select name from outreach.providers where provider_id = :p", p=case.get("pcp_provider_id"))
     channels = {"portal": bool(p["has_portal_account"] and p["portal_opt_in"]),
                 "sms": bool(p["sms_opt_in"] and p["mobile_phone"]),
                 "email": bool(p["email_opt_in"] and p["email"]),
@@ -103,6 +113,8 @@ def patient_summary(case_id: str) -> dict:
         "stay": None if not stay else {
             "diagnosis_group": stay["primary_dx_group"], "discharged": str(stay["discharge_datetime"])[:16],
             "disposition": stay["discharge_disposition"], "followup_already_booked": bool(stay["followup_scheduled_7d"])},
+        "care_team": {"own_doctor": pcp["name"] if pcp else None,
+                      "follow_up_by": str(case["follow_up_by"])[:10] if case.get("follow_up_by") else None},
         "risk": None if not score else {
             "risk": score["risk"], "tier": score["tier"], "top_drivers": json.loads(score["top_drivers"]),
             "barriers": json.loads(score["barriers"])},
@@ -120,7 +132,8 @@ def find_slots(case_id: str, earliest: str | None = None, latest: str | None = N
     limit = max(1, min(int(limit), 10))
     with db.transaction() as c:
         t = now(c)
-        summary_ok = db.one(c, """select p.telehealth_opt_in and p.telehealth_capable as tele_ok
+        summary_ok = db.one(c, """select p.telehealth_opt_in and p.telehealth_capable as tele_ok,
+                                         p.preferred_language as lang, k.pcp_provider_id, k.follow_up_by
                                   from outreach.cases k join sim.patients p using (patient_id)
                                   where k.case_id = :id""", id=case_id)
         if summary_ok is None:
@@ -131,14 +144,22 @@ def find_slots(case_id: str, earliest: str | None = None, latest: str | None = N
         end = datetime.fromisoformat(latest) if latest else start + timedelta(days=14)
         hours = {"morning": (0, 12), "afternoon": (12, 24)}.get(part_of_day, (0, 24))
         modes = [mode] if mode else (["in_person", "telehealth"] if summary_ok["tele_ok"] else ["in_person"])
-        found = db.rows(c, """select s.slot_id, s.start_at, s.mode, p.name as provider, p.role
+        found = db.rows(c, """select s.slot_id, s.start_at, s.mode, s.provider_id, p.name as provider, p.role,
+                                     :lang = any(p.languages) as speaks_language
                               from outreach.slots s join outreach.providers p using (provider_id)
                               where s.status = 'open' and s.start_at >= :start and s.start_at < :end
                                 and extract(hour from s.start_at) >= :h0 and extract(hour from s.start_at) < :h1
                                 and s.mode = any(:modes)
-                              order by s.start_at limit :lim""",
-                        start=start, end=end, h0=hours[0], h1=hours[1], modes=modes, lim=limit)
-    return [{**r, "start_at": r["start_at"].isoformat(timespec="minutes")} for r in found]
+                              order by s.start_at limit 200""",
+                        start=start, end=end, h0=hours[0], h1=hours[1], modes=modes, lang=summary_ok["lang"])
+    due = summary_ok["follow_up_by"]
+    for r in found:
+        r["own_doctor"] = r["provider_id"] == summary_ok["pcp_provider_id"]
+        r["within_target"] = due is None or r["start_at"].date() <= due.date()
+    # meet the follow-up deadline first, then the patient's language, then their own doctor, then soonest
+    found.sort(key=lambda r: (not r["within_target"], not r["speaks_language"], not r["own_doctor"], r["start_at"]))
+    return [{k: v for k, v in r.items() if k != "provider_id"}
+            | {"start_at": r["start_at"].isoformat(timespec="minutes")} for r in found[:limit]]
 
 
 def book_appointment(case_id: str, slot_id: str, idempotency_key: str) -> dict:
@@ -240,10 +261,23 @@ def _appt_view(a: dict) -> dict:
 
 
 # ------------------------------------------------------------------ messaging
-def send_message(case_id: str, channel: str, body: str, idempotency_key: str, subject: str | None = None) -> dict:
-    """Send through one channel. Refused unless the patient opted into it. Contact details stay server-side."""
+def in_quiet_hours(t: datetime) -> bool:
+    return t.hour >= QUIET_HOURS[0] or t.hour < QUIET_HOURS[1]
+
+
+def _next_morning(t: datetime) -> datetime:
+    day = t.date() if t.hour < QUIET_HOURS[1] else t.date() + timedelta(days=1)
+    return datetime.combine(day, datetime.min.time()).replace(hour=QUIET_HOURS[1])
+
+
+def send_message(case_id: str, channel: str, body: str, idempotency_key: str, subject: str | None = None,
+                 priority: str = "normal") -> dict:
+    """Send through one channel. Refused unless the patient opted into it. Contact details stay server-side.
+    During quiet hours a normal message is held and delivered at 8 AM; safety messages go out immediately."""
     if channel not in CHANNELS:
         raise StoreError(f"channel must be one of {CHANNELS}")
+    if priority not in PRIORITIES:
+        raise StoreError(f"priority must be one of {PRIORITIES}")
     if not body or not body.strip():
         raise StoreError("message body is empty")
     with db.transaction() as c:
@@ -261,13 +295,18 @@ def send_message(case_id: str, channel: str, body: str, idempotency_key: str, su
         if not allowed[channel]:
             raise StoreError(f"patient has not opted into {channel}; use one of "
                              f"{[ch for ch, ok in allowed.items() if ok] or 'no channel (escalate to nurse)'}")
-        status = {"portal": "delivered", "sms": "sent", "email": "sent", "phone": "queued"}[channel]
+        t = now(c)
+        hold = priority == "normal" and in_quiet_hours(t)
+        status = "scheduled" if hold else {"portal": "delivered", "sms": "sent", "email": "sent", "phone": "queued"}[channel]
         # record first, then send, inside one transaction: if sending fails the record rolls back too
         msg = db.one(c, """insert into outreach.messages (message_id, idempotency_key, case_id, patient_id, direction,
-                               channel, subject, body, status, created_at)
-                           values (:m, :k, :case_id, :p, 'outbound', :ch, :subj, :body, :status, :t) returning *""",
+                               channel, subject, body, status, created_at, deliver_at)
+                           values (:m, :k, :case_id, :p, 'outbound', :ch, :subj, :body, :status, :t, :d) returning *""",
                      m=_id("msg"), k=idempotency_key, case_id=case_id, p=p["patient_id"], ch=channel, subj=subject,
-                     body=body, status=status, t=now(c))
+                     body=body, status=status, t=t, d=_next_morning(t) if hold else None)
+        if hold:
+            log_event(c, case_id, "message_held", {"message_id": msg["message_id"], "until": str(msg["deliver_at"])})
+            return _msg_view(msg)
         if channel == "email":
             _send_email(p["email"], subject or "A message from your care team", body)
         db.rows(c, "update outreach.cases set attempts = attempts + 1, updated_at = :t where case_id = :id",
@@ -298,8 +337,29 @@ def get_thread(case_id: str, limit: int = 20) -> list[dict]:
 
 
 def _msg_view(m: dict) -> dict:
-    return {"message_id": m["message_id"], "direction": m["direction"], "channel": m["channel"],
+    view = {"message_id": m["message_id"], "direction": m["direction"], "channel": m["channel"],
             "subject": m["subject"], "body": m["body"], "status": m["status"], "at": str(m["created_at"])}
+    if m.get("deliver_at"):
+        view["deliver_at"] = str(m["deliver_at"])
+    return view
+
+
+def deliver_due() -> int:
+    """Send messages held for quiet hours whose time has come (run by the sequencer each simulated hour)."""
+    sent = 0
+    with db.transaction() as c:
+        t = now(c)
+        held = db.rows(c, """select m.*, p.email from outreach.messages m join sim.patients p using (patient_id)
+                             where m.status = 'scheduled' and m.deliver_at <= :t for update of m""", t=t)
+        for m in held:
+            if m["channel"] == "email":
+                _send_email(m["email"], m["subject"] or "A message from your care team", m["body"])
+            status = {"portal": "delivered", "sms": "sent", "email": "sent", "phone": "queued"}[m["channel"]]
+            db.rows(c, "update outreach.messages set status = :s where message_id = :m", s=status, m=m["message_id"])
+            log_event(c, m["case_id"], "message_sent", {"message_id": m["message_id"], "channel": m["channel"],
+                                                        "after_hold": True})
+            sent += 1
+    return sent
 
 
 def _send_email(to: str, subject: str, body: str) -> None:
@@ -359,6 +419,23 @@ def update_case(case_id: str, status: str, reason: str, next_action_at: str | No
                 closed=closed, reason=reason, id=case_id)
         log_event(c, case_id, "status_changed", {"from": case["status"], "to": status, "reason": reason})
     return get_case(case_id, events=5)
+
+
+def set_preferred_channel(case_id: str, channel: str, reason: str) -> dict:
+    """The patient asked to be contacted another way. Recorded only if we hold that contact detail."""
+    if channel not in CHANNELS:
+        raise StoreError(f"channel must be one of {CHANNELS}")
+    have = {"portal": "has_portal_account", "sms": "mobile_phone", "phone": "mobile_phone", "email": "email"}
+    with db.transaction() as c:
+        case = _case(c, case_id, acting=True)
+        p = _patient(c, case["patient_id"])
+        if not p[have[channel]]:
+            raise StoreError(f"no {channel} contact on file for this patient; a nurse must collect it first. "
+                             "Keep using the current channel.")
+        db.rows(c, CONSENT_SQL[channel], ch=channel, p=p["patient_id"])
+        log_event(c, case_id, "consent_changed", {"preferred_channel": channel, "previous": p["preferred_channel"],
+                                                  "reason": reason, "source": "patient message"})
+    return patient_summary(case_id)["contact"]
 
 
 def add_note(case_id: str, note: str) -> dict:

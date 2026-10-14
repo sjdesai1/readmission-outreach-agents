@@ -2,10 +2,11 @@
 
 Skipped automatically when Postgres isn't reachable. CI runs them with a Postgres service container.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
+from readmit import db
 from readmit.outreach import store
 from readmit.outreach.store import StoreError
 
@@ -79,3 +80,53 @@ def test_no_actions_before_the_case_opens():
         with pytest.raises(StoreError, match="not open yet"):
             action()
     assert store.get_case("C1")["recent_events"] == []    # reads still work, nothing was written
+
+
+NOW = datetime(2026, 9, 9, 9, 0)
+
+
+def add_spanish_speaking_doctor():
+    with db.transaction() as c:
+        db.rows(c, """insert into outreach.providers (provider_id, name, role, languages)
+                      values ('PRV09', 'Dra. Ruiz', 'primary care', '{English,Spanish}')""")
+        db.rows(c, """insert into outreach.slots (slot_id, provider_id, start_at, end_at, mode, status)
+                      values ('S9', 'PRV09', :s, :e, 'in_person', 'open')""",
+                s=NOW + timedelta(days=3), e=NOW + timedelta(days=3, minutes=30))
+
+
+def test_quiet_hours_hold_messages_until_morning():
+    store.set_now(datetime(2026, 9, 9, 22, 0))
+    m = store.send_message("C1", "email", "Checking in", "late-1")
+    assert m["status"] == "scheduled" and m["deliver_at"].startswith("2026-09-10 08:00")
+    assert store.deliver_due() == 0
+    store.set_now(datetime(2026, 9, 10, 8, 5))
+    assert store.deliver_due() == 1 and store.get_thread("C1")[-1]["status"] == "sent"
+
+
+def test_safety_messages_ignore_quiet_hours():
+    store.set_now(datetime(2026, 9, 9, 23, 30))
+    assert store.send_message("C2", "sms", "Call 911 now", "s-1", priority="safety")["status"] == "sent"
+
+
+def test_slots_rank_language_then_own_doctor():
+    add_spanish_speaking_doctor()
+    assert store.find_slots("C2", limit=3)[0]["slot_id"] == "S9"          # Jose speaks Spanish
+    with db.transaction() as c:
+        db.rows(c, "update outreach.cases set pcp_provider_id = 'PRV09' where case_id = 'C1'")
+    first = store.find_slots("C1", limit=3)[0]                             # Maria: her own doctor first
+    assert first["slot_id"] == "S9" and first["own_doctor"]
+
+
+def test_follow_up_deadline_beats_everything():
+    add_spanish_speaking_doctor()
+    with db.transaction() as c:
+        db.rows(c, "update outreach.cases set follow_up_by = :d where case_id = 'C2'", d=NOW + timedelta(days=2))
+    slots = store.find_slots("C2", limit=3)
+    assert slots[0]["slot_id"] == "S1" and slots[-1]["slot_id"] == "S9" and not slots[-1]["within_target"]
+
+
+def test_channel_change_needs_the_contact_on_file():
+    with pytest.raises(StoreError, match="no sms contact"):
+        store.set_preferred_channel("C1", "sms", "text me instead")        # Maria has no mobile number
+    assert store.set_preferred_channel("C2", "portal", "use the portal")["preferred_channel"] == "portal"
+    assert store.get_case("C2")["recent_events"][-1]["type"] == "consent_changed"

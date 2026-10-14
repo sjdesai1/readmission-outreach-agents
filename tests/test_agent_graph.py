@@ -118,3 +118,9 @@ def test_a_draft_naming_the_diagnosis_is_rewritten():
         return {"draft": {"subject": "x", "body": "Hi Maria, checking in about your heart failure."}}
     s = turn("C1", agents={"message_writer": leaky})
     assert s["outcome"]["action"] == "sent" and "heart failure" not in outbound("C1")[-1]["body"].lower()
+
+
+def test_outreach_at_night_is_held_until_morning():
+    store.set_now(datetime(2026, 9, 9, 21, 30))
+    s = turn("C1")
+    assert s["outcome"]["action"] == "scheduled" and s["outcome"]["deliver_at"].startswith("2026-09-10 08:00")

@@ -5,7 +5,8 @@ load_context -> input_guard -> route
   inbound_reply -> reply_interpreter -> by intent:
         wants_visit / reschedule -> scheduler -> message_writer
         question / barrier       -> care_planner -> message_writer
-        decline / channel_change -> message_writer
+        decline                  -> message_writer
+        channel_change           -> apply_channel_change -> message_writer (answers on the new channel)
         clinical_question / wants_human / symptom / abusive -> escalate   (nurse handoff comes in step 5)
         opt_out                  -> opt_out
         third_party              -> proxy_reply  (family member: privacy-safe template, no LLM)
@@ -125,7 +126,9 @@ async def send(state: TurnState, gw: Gateway) -> dict:
                           reason=f"message sent by {channel}", next_action_at=nxt)
     except ToolFailed as e:
         return {"escalate_reason": f"send failed: {e.message}"}
-    return {"outcome": {"action": "sent", "channel": channel, "message_id": msg["message_id"]}}
+    held = msg["status"] == "scheduled"           # quiet hours: the server holds it until 8 AM
+    return {"outcome": {"action": "scheduled" if held else "sent", "channel": channel,
+                        "message_id": msg["message_id"], **({"deliver_at": msg["deliver_at"]} if held else {})}}
 
 
 async def escalate(state: TurnState, gw: Gateway) -> dict:
@@ -136,7 +139,7 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
     if state.get("urgent") and state.get("inbound_channel"):
         try:
             sent = await gw.call("messaging", "send_message", case_id=cid, channel=state["inbound_channel"],
-                                 body=EMERGENCY_MSG.get(lang, EMERGENCY_MSG["English"]),
+                                 body=EMERGENCY_MSG.get(lang, EMERGENCY_MSG["English"]), priority="safety",
                                  idempotency_key=f"{state['turn_key']}:safety")
         except ToolFailed:
             pass        # the nurse still gets the case; never let a failed send hide an emergency
@@ -154,12 +157,26 @@ async def opt_out(state: TurnState, gw: Gateway) -> dict:
     if channel:     # one confirmation, sent before the case closes (closed cases can't be messaged)
         try:
             await gw.call("messaging", "send_message", case_id=cid, channel=channel,
-                          body=OPT_OUT_MSG.get(lang, OPT_OUT_MSG["English"]),
+                          body=OPT_OUT_MSG.get(lang, OPT_OUT_MSG["English"]), priority="safety",
                           idempotency_key=f"{state['turn_key']}:optout")
         except ToolFailed:
             pass
     await gw.call("cases", "update_case_status", case_id=cid, status="opted_out", reason="patient opted out")
     return {"outcome": {"action": "opted_out"}}
+
+
+async def apply_channel_change(state: TurnState, gw: Gateway) -> dict:
+    """The patient asked to be contacted another way: record it (server checks the contact exists), answer there."""
+    new = ((state.get("intent") or {}).get("details") or {}).get("new_channel")
+    if not new:
+        return {"channel_change": {"ok": False, "reason": "patient didn't say which channel"}}
+    try:
+        contact = await gw.call("cases", "set_preferred_channel", case_id=state["case_id"], channel=new,
+                                reason=f"patient asked: {(state.get('inbound') or '')[:120]}")
+    except ToolFailed as e:
+        return {"channel_change": {"ok": False, "requested": new, "reason": e.message}}
+    summary = {**state["summary"], "contact": contact}
+    return {"channel_change": {"ok": True, "now_using": new}, "reply_on": new, "summary": summary}
 
 
 async def proxy_reply(state: TurnState, gw: Gateway) -> dict:
@@ -215,6 +232,8 @@ def after_interpreter(state: TurnState) -> str:
         return "scheduler"
     if intent in ("question", "barrier"):
         return "care_planner"
+    if intent == "channel_change":
+        return "apply_channel_change"
     if intent == "opt_out":
         return "opt_out"
     if intent == "third_party":
@@ -267,7 +286,8 @@ async def _reviewer_counted(fn, state, gw):
 def build_graph(gateway: Gateway, agents: dict | None = None):
     agents = {**STUBS, **(agents or {})}
     rules = {"load_context": load_context, "input_guard": input_guard, "output_checks": output_checks,
-             "send": send, "escalate": escalate, "opt_out": opt_out, "proxy_reply": proxy_reply}
+             "send": send, "escalate": escalate, "opt_out": opt_out, "proxy_reply": proxy_reply,
+             "apply_channel_change": apply_channel_change}
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
 
@@ -284,7 +304,9 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", END])
     g.add_conditional_edges("input_guard", after_guard, ["opt_out", "escalate", "proxy_reply", "reply_interpreter"])
     g.add_conditional_edges("reply_interpreter", after_interpreter,
-                            ["scheduler", "care_planner", "opt_out", "proxy_reply", "escalate", "message_writer"])
+                            ["scheduler", "care_planner", "opt_out", "proxy_reply", "apply_channel_change", "escalate",
+                             "message_writer"])
+    g.add_edge("apply_channel_change", "message_writer")
     g.add_conditional_edges("care_planner", after_planner, ["scheduler", "message_writer", "escalate"])
     g.add_conditional_edges("scheduler", after_scheduler, ["message_writer", "escalate"])
     g.add_edge("message_writer", "output_checks")

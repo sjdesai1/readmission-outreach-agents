@@ -38,6 +38,17 @@ def update_case_status(
     return call(store.update_case, case_id, status, reason, next_action_at)
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+def set_preferred_channel(
+    case_id: CaseId,
+    channel: Annotated[Literal["portal", "sms", "email", "phone"], Field(description="Channel the patient asked for")],
+    reason: Annotated[str, Field(min_length=3, description="What the patient said, briefly (goes in the audit log)")],
+) -> dict:
+    """Record the patient's request to be contacted another way. Refused if that contact detail isn't on file.
+    Returns the updated allowed channels and preference."""
+    return call(store.set_preferred_channel, case_id, channel, reason)
+
+
 @mcp.tool(annotations={"readOnlyHint": False})
 def add_case_note(case_id: CaseId, note: Annotated[str, Field(min_length=3)]) -> dict:
     """Add a free-text note to the case history, e.g. what the patient said or why a decision was made."""

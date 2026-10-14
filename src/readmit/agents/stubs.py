@@ -44,7 +44,8 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
             fitting = (await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or [])
             note = "no open times match what the patient asked for; these are the closest options"
         offered = [{"slot_id": s["slot_id"], "start_at": s["start_at"], "when": when(s["start_at"]),
-                    "mode": s["mode"], "provider": s["provider"]} for s in fitting]
+                    "mode": s["mode"], "provider": s["provider"], "own_doctor": s.get("own_doctor", False)}
+                   for s in fitting]
         appointment = None
         if intent.get("accepts") and offered and not note and not slot_fits(offered[0]["start_at"], details):
             appointment = await gw.call("scheduling", "book_appointment", case_id=case_id,
@@ -67,6 +68,10 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
                             enumerate(sched["offered"], 1))
         body = (f"Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
                 f"after your hospital stay. Open times: {options}. Reply with the number that works for you.")
+    elif intent == "channel_change":
+        ok = (state.get("channel_change") or {}).get("ok")
+        body = (f"Thanks {name}, we'll use this channel from now on." if ok else
+                f"Thanks {name}. We can't switch to that channel yet; a nurse will help update your contact details.")
     elif intent == "decline":
         body = f"Thanks for letting us know, {name}. If you change your mind, just reply to this message."
     elif intent == "question":

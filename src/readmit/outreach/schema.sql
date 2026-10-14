@@ -95,3 +95,9 @@ create table if not exists outreach.referrals (
     status          text not null default 'requested',
     created_at      timestamp not null
 );
+
+-- Milestone 3 step 3 additions. ALTER ... IF NOT EXISTS keeps this file safe to re-run on an existing database.
+alter table outreach.providers add column if not exists languages text[] not null default '{English}';
+alter table outreach.cases add column if not exists pcp_provider_id text;        -- the patient's own doctor
+alter table outreach.cases add column if not exists follow_up_by timestamp;      -- target date for the visit
+alter table outreach.messages add column if not exists deliver_at timestamp;     -- held for quiet hours

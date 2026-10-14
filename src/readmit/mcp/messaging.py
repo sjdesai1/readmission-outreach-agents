@@ -27,10 +27,14 @@ def send_message(
     body: Annotated[str, Field(min_length=1, description="Message text (for phone: the call script)")],
     idempotency_key: Annotated[str, Field(description="Unique per message; a retry with the same key is not resent")],
     subject: Annotated[str | None, Field(description="Email or portal subject line")] = None,
+    priority: Annotated[Literal["normal", "safety"], Field(
+        description="safety only for emergency instructions and opt-out confirmations: sent even in quiet hours"
+    )] = "normal",
 ) -> dict:
     """Send one message on one channel. Portal is delivered to the inbox, SMS and email are sent,
-    phone calls are queued for the dialer. Refused for channels without consent and for closed cases."""
-    return call(store.send_message, case_id, channel, body, idempotency_key, subject)
+    phone calls are queued for the dialer. Refused for channels without consent and for closed cases.
+    Between 8 PM and 8 AM normal messages are held (status 'scheduled') and delivered at 8 AM."""
+    return call(store.send_message, case_id, channel, body, idempotency_key, subject, priority)
 
 
 @mcp.tool(annotations=READ_ONLY)

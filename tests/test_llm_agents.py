@@ -131,3 +131,20 @@ def test_books_when_the_choice_fits(fake_llm):
                                             "body": f"You're booked for {u['appointment']['when']}."}}
     s = turn("C1", "friday morning works")
     assert s["schedule"]["appointment"]["when"].startswith("Fri Sep 11")
+
+
+def test_patient_switches_channel_and_gets_the_answer_there(fake_llm):
+    answers, _ = fake_llm
+    answers |= {"interpret_reply": {"intent": "channel_change", "new_channel": "portal", "confidence": 0.9},
+                "write_message": {"subject": "Got it", "body": "Got it {first_name}, the portal it is."}}
+    s = turn("C2", "can you message me in the portal instead", channel="sms")
+    assert "apply_channel_change" in s["path"] and s["outcome"]["channel"] == "portal"
+    assert store.patient_summary("C2")["contact"]["preferred_channel"] == "portal"
+
+
+def test_channel_change_without_contact_details_is_explained(fake_llm):
+    answers, _ = fake_llm
+    answers |= {"interpret_reply": {"intent": "channel_change", "new_channel": "sms", "confidence": 0.9},
+                "write_message": {"subject": "Sorry", "body": "Sorry {first_name}, a nurse will help with that."}}
+    s = turn("C1", "text me instead", channel="email")                    # no mobile number on file
+    assert not s["channel_change"]["ok"] and s["outcome"]["channel"] == "email"

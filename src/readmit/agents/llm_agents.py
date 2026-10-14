@@ -17,8 +17,9 @@ from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.state import TurnState, reply_channel
 from readmit.llm import LLMError, complete_json, load_prompt
 
-# interpret_reply v2: accepts only a specific time, exact time bounds.  write_message v2: video vs clinic.
-PROMPTS = {"interpret_reply": "v2", "plan_care": "v1", "write_message": "v2"}
+# interpret_reply v2: accepts only a specific time, exact time bounds.
+# write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
+PROMPTS = {"interpret_reply": "v2", "plan_care": "v1", "write_message": "v3"}
 MIN_CONFIDENCE = 0.5
 
 Intent = Literal["wants_visit", "reschedule", "question", "clinical_question", "barrier", "decline", "opt_out",
@@ -156,12 +157,14 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
     s = state["summary"]
     user = {
         "purpose": message_purpose(state),
+        "first_message": not any(m["direction"] == "outbound" for m in state.get("thread") or []),
+        "channel_change": state.get("channel_change"),
         "channel": reply_channel(state),
         "language": s["patient"]["preferred_language"],
         "patient_name_token": s["patient"]["first_name"],
         "offered_slots": [{"option": i, "when": x["when"],
                            "how": "video visit" if x["mode"] == "telehealth" else "in the clinic",
-                           "with": x["provider"]}
+                           "with": x["provider"], "own_doctor": bool(x.get("own_doctor"))}
                           for i, x in enumerate(sched.get("offered") or [], 1)],
         "appointment": ({"when": sched["appointment"]["when"],
                          "how": "video visit" if sched["appointment"]["mode"] == "telehealth" else "in the clinic",
