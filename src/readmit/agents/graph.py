@@ -1,6 +1,7 @@
 """The outreach graph: rule nodes + 5 agents, wired with LangGraph. One run = one turn for one patient.
 
 load_context -> input_guard -> route
+  phone reply, identity not yet confirmed -> identity_check (year of birth, checked server-side) -> continue / ask
   outreach_due  -> care_planner -> scheduler -> message_writer
   inbound_reply -> reply_interpreter -> by intent:
         wants_visit / reschedule -> scheduler -> message_writer
@@ -15,6 +16,7 @@ load_context -> input_guard -> route
 message_writer -> output_checks -> safety_reviewer -> send      (one rewrite allowed, then escalate)
 """
 import hashlib
+import re
 from datetime import timedelta
 
 from langgraph.graph import END, START, StateGraph
@@ -41,6 +43,15 @@ PROXY_MSG = {
     "Spanish": "Gracias por responder. Por privacidad, solo podemos hablar de esto con la persona a quien se "
                "envió este mensaje. Pídale que responda aquí o que se comunique con su equipo de atención.",
 }
+ID_QUESTION = {   # appended by code to every call script until identity is confirmed: exact wording, every time
+    "English": "Before we go on, to protect your privacy, could you please tell me your year of birth?",
+    "Spanish": "Antes de continuar, para proteger su privacidad, ¿podría decirme su año de nacimiento?",
+}
+ID_RETRY = {
+    "English": "Sorry, that didn't match our records. Could you please tell me your year of birth again?",
+    "Spanish": "Lo siento, eso no coincide con nuestros registros. ¿Podría decirme su año de nacimiento otra vez?",
+}
+YEAR_RE = re.compile(r"\b(19\d{2}|20[0-2]\d)\b")
 OPT_OUT_MSG = {
     "English": "You will not receive more outreach messages from the Orchard Valley care team. "
                "For medical questions, contact your doctor's office.",
@@ -87,6 +98,11 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
 
 async def input_guard(state: TurnState, gw: Gateway) -> dict:
     g = screen_inbound(state.get("inbound"))
+    # anyone can answer a phone: until identity is confirmed, phone replies go through the identity check
+    # (STOP and emergencies are still handled first, whoever is speaking)
+    if (g["action"] == "continue" and state.get("inbound_channel") == "phone"
+            and not (state.get("case") or {}).get("identity_verified_at")):
+        g = {**g, "action": "verify_identity"}
     out = {"guard": g}
     if g["action"] == "emergency":
         out |= {"escalate_reason": f"possible emergency in patient reply: {state.get('inbound')!r}", "urgent": True}
@@ -112,8 +128,12 @@ async def send(state: TurnState, gw: Gateway) -> dict:
     try:
         # the real name is looked up only here, at the last moment, and never written back into the state
         name = (await gw.call("patient_data", "get_patient_summary", case_id=cid))["patient"]["first_name"]
-        msg = await gw.call("messaging", "send_message", case_id=cid, channel=channel,
-                            body=render(draft["body"], name),
+        body = render(draft["body"], name)
+        lang = state["summary"]["patient"]["preferred_language"]
+        if (channel == "phone" and not (state.get("case") or {}).get("identity_verified_at")
+                and not (state.get("identity") or {}).get("verified")):
+            body = f"{body} {ID_QUESTION.get(lang, ID_QUESTION['English'])}"
+        msg = await gw.call("messaging", "send_message", case_id=cid, channel=channel, body=body,
                             subject=render(draft["subject"], name) if draft.get("subject") else None,
                             idempotency_key=f"{state['turn_key']}:msg")
         if intent:
@@ -163,6 +183,33 @@ async def opt_out(state: TurnState, gw: Gateway) -> dict:
             pass
     await gw.call("cases", "update_case_status", case_id=cid, status="opted_out", reason="patient opted out")
     return {"outcome": {"action": "opted_out"}}
+
+
+async def identity_check(state: TurnState, gw: Gateway) -> dict:
+    """Phone reply before identity is confirmed: look for a year of birth and check it server-side."""
+    cid, lang = state["case_id"], state["summary"]["patient"]["preferred_language"]
+    year = YEAR_RE.search(state.get("inbound") or "")
+    if year:
+        try:
+            r = await gw.call("patient_data", "verify_identity", case_id=cid, birth_year=int(year.group(1)))
+        except ToolFailed as e:
+            return {"identity": {"verified": False}, "escalate_reason": f"identity check locked: {e.message}"}
+        if r["verified"]:
+            return {"identity": {"verified": True}}            # carry on with the rest of what they said
+        if r["attempts_left"] == 0:
+            return {"identity": {"verified": False},
+                    "escalate_reason": "identity check failed 3 times; a nurse must verify the patient"}
+        body, note = ID_RETRY.get(lang, ID_RETRY["English"]), "identity: answer didn't match, asked again"
+    else:
+        body, note = ID_QUESTION.get(lang, ID_QUESTION["English"]), "identity: asked for year of birth"
+    try:
+        msg = await gw.call("messaging", "send_message", case_id=cid, channel="phone", body=body,
+                            idempotency_key=f"{state['turn_key']}:identity")
+    except ToolFailed as e:
+        return {"identity": {"verified": False}, "escalate_reason": f"identity question could not be sent: {e.message}"}
+    await gw.call("cases", "add_case_note", case_id=cid, note=note)
+    return {"identity": {"verified": False, "asked": True},
+            "outcome": {"action": "identity_requested", "message_id": msg["message_id"]}}
 
 
 async def apply_channel_change(state: TurnState, gw: Gateway) -> dict:
@@ -220,8 +267,14 @@ def after_context(state: TurnState) -> str:
 
 
 def after_guard(state: TurnState) -> str:
-    return {"opt_out": "opt_out", "emergency": "escalate", "third_party": "proxy_reply"}.get(
-        state["guard"]["action"], "reply_interpreter")
+    return {"opt_out": "opt_out", "emergency": "escalate", "third_party": "proxy_reply",
+            "verify_identity": "identity_check"}.get(state["guard"]["action"], "reply_interpreter")
+
+
+def after_identity(state: TurnState) -> str:
+    if state.get("escalate_reason"):
+        return "escalate"
+    return "reply_interpreter" if state["identity"].get("verified") else END
 
 
 def after_interpreter(state: TurnState) -> str:
@@ -287,7 +340,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     agents = {**STUBS, **(agents or {})}
     rules = {"load_context": load_context, "input_guard": input_guard, "output_checks": output_checks,
              "send": send, "escalate": escalate, "opt_out": opt_out, "proxy_reply": proxy_reply,
-             "apply_channel_change": apply_channel_change}
+             "apply_channel_change": apply_channel_change, "identity_check": identity_check}
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
 
@@ -302,7 +355,9 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         g.add_node(name, node(name, fn))
     g.add_edge(START, "load_context")
     g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", END])
-    g.add_conditional_edges("input_guard", after_guard, ["opt_out", "escalate", "proxy_reply", "reply_interpreter"])
+    g.add_conditional_edges("input_guard", after_guard,
+                            ["opt_out", "escalate", "proxy_reply", "identity_check", "reply_interpreter"])
+    g.add_conditional_edges("identity_check", after_identity, ["reply_interpreter", "escalate", END])
     g.add_conditional_edges("reply_interpreter", after_interpreter,
                             ["scheduler", "care_planner", "opt_out", "proxy_reply", "apply_channel_change", "escalate",
                              "message_writer"])

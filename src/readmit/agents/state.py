@@ -31,6 +31,7 @@ class TurnState(TypedDict, total=False):
     problems: list[str]                 # output check failures (fed back to the writer)
     review: dict                        # safety reviewer: verdict, reasons
     revisions: int
+    identity: dict                      # phone identity check: asked / verified
     reply_on: str | None                # channel the patient just switched to (overrides the inbound channel)
     channel_change: dict                # result of a requested channel change
     escalate_reason: str | None

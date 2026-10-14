@@ -27,6 +27,7 @@ ACCESS: dict[str, set[str]] = {
     "opt_out": {"messaging.send_message", "cases.update_case_status"},
     "proxy_reply": {"messaging.send_message", "cases.add_case_note", "cases.update_case_status"},
     "apply_channel_change": {"cases.set_preferred_channel"},
+    "identity_check": {"patient_data.verify_identity", "messaging.send_message", "cases.add_case_note"},
 }
 
 

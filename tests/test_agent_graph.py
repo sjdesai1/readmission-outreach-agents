@@ -7,6 +7,7 @@ from datetime import datetime
 
 import pytest
 
+from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.agents.graph import run_turn
 from readmit.agents.state import when
@@ -124,3 +125,31 @@ def test_outreach_at_night_is_held_until_morning():
     store.set_now(datetime(2026, 9, 9, 21, 30))
     s = turn("C1")
     assert s["outcome"]["action"] == "scheduled" and s["outcome"]["deliver_at"].startswith("2026-09-10 08:00")
+
+
+def test_phone_reply_needs_identity_before_anything_else():
+    s = turn("C2", "yes the first one", channel="phone")
+    assert s["path"] == ["load_context", "input_guard", "identity_check"]
+    assert "año de nacimiento" in outbound("C2")[-1]["body"]               # asked, in Spanish
+    assert store.get_case("C2")["status"] != "booked"
+
+
+def test_right_birth_year_verifies_and_the_turn_continues():
+    s = turn("C2", "1968, yes the first one", channel="phone")
+    assert "reply_interpreter" in s["path"] and s["schedule"]["appointment"]["status"] == "booked"
+    assert store.get_case("C2")["identity_verified_at"]
+
+
+def test_three_wrong_answers_go_to_a_nurse():
+    for year in ("1950", "1951"):
+        turn("C2", f"it's {year}", channel="phone")
+    s = turn("C2", "1952", channel="phone")
+    assert s["outcome"]["action"] == "escalated" and "3 times" in s["outcome"]["reason"]
+
+
+def test_call_scripts_end_with_the_identity_question():
+    with db.transaction() as c:
+        db.rows(c, "update sim.patients set preferred_channel = 'phone' where patient_id = 'P2'")
+    turn("C2")
+    assert outbound("C2")[-1]["channel"] == "phone"
+    assert outbound("C2")[-1]["body"].endswith("¿podría decirme su año de nacimiento?")

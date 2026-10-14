@@ -27,7 +27,7 @@ def tool_names(server):
 
 
 def test_each_server_exposes_only_its_own_tools():
-    assert tool_names(patient_data) == ["get_patient_summary"]
+    assert tool_names(patient_data) == ["get_patient_summary", "verify_identity"]
     assert tool_names(scheduling) == ["book_appointment", "cancel_appointment", "find_slots", "get_current_time",
                                       "reschedule_appointment"]
     assert tool_names(messaging) == ["get_thread", "send_message"]

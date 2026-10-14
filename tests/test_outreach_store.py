@@ -130,3 +130,13 @@ def test_channel_change_needs_the_contact_on_file():
         store.set_preferred_channel("C1", "sms", "text me instead")        # Maria has no mobile number
     assert store.set_preferred_channel("C2", "portal", "use the portal")["preferred_channel"] == "portal"
     assert store.get_case("C2")["recent_events"][-1]["type"] == "consent_changed"
+
+
+def test_identity_check_never_reveals_the_answer_and_locks():
+    for left in (2, 1, 0):
+        assert store.verify_identity("C1", 1960) == {"verified": False, "attempts_left": left}
+    with pytest.raises(StoreError, match="locked"):
+        store.verify_identity("C1", 1954)                                   # even the right answer, once locked
+    assert store.verify_identity("C2", 1968) == {"verified": True}
+    types = [e["type"] for e in store.get_case("C1")["recent_events"]]
+    assert types == ["identity_failed", "identity_failed", "identity_locked"]

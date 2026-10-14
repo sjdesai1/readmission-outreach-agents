@@ -9,6 +9,7 @@ Rules enforced here, not in prompts (an agent can't talk its way around them):
   * scheduling: the patient's own doctor, a provider who speaks their language, and the follow-up deadline
     for their diagnosis rank first
   * consent: a channel change is recorded only if the contact detail exists, with an audit event
+  * identity: checked against the record server-side (the caller never sees the true value); locks after 3 misses
   * idempotency: retrying a booking, message or referral with the same key returns the original
   * audit: every action writes an event on the case
 """
@@ -31,6 +32,7 @@ MIN_LEAD = timedelta(hours=2)          # can't book a slot starting in less than
 QUIET_HOURS = (20, 8)                  # no outreach from 8 PM to 8 AM (patient's local time)
 FAST_FOLLOW_UP = {"Heart failure": 7, "COPD exacerbation": 7, "Acute MI": 7, "Sepsis": 7}   # days; others 14
 PRIORITIES = ("normal", "safety")
+MAX_IDENTITY_ATTEMPTS = 3
 CONSENT_SQL = {ch: f"update sim.patients set {ch}_opt_in = true, preferred_channel = :ch where patient_id = :p"
                for ch in CHANNELS}   # fixed statements, one per known channel: no user text ever reaches the SQL
 SENDER = "care-team@orchardvalley.example"
@@ -436,6 +438,28 @@ def set_preferred_channel(case_id: str, channel: str, reason: str) -> dict:
         log_event(c, case_id, "consent_changed", {"preferred_channel": channel, "previous": p["preferred_channel"],
                                                   "reason": reason, "source": "patient message"})
     return patient_summary(case_id)["contact"]
+
+
+def verify_identity(case_id: str, birth_year: int) -> dict:
+    """Compare the year of birth someone gave with the record. Returns only yes/no and attempts left."""
+    with db.transaction() as c:
+        case = _case(c, case_id, lock=True, acting=True)
+        if case["identity_verified_at"]:
+            return {"verified": True, "note": "already verified for this case"}
+        if case["identity_failures"] >= MAX_IDENTITY_ATTEMPTS:
+            raise StoreError(f"identity check locked after {MAX_IDENTITY_ATTEMPTS} failed attempts; "
+                             "a nurse must verify the patient")
+        ok = int(birth_year) == int(_patient(c, case["patient_id"])["birth_year"])
+        t = now(c)
+        if ok:
+            db.rows(c, "update outreach.cases set identity_verified_at = :t where case_id = :id", t=t, id=case_id)
+            log_event(c, case_id, "identity_verified", {"method": "birth_year"})
+            return {"verified": True}
+        failures = case["identity_failures"] + 1
+        db.rows(c, "update outreach.cases set identity_failures = :f where case_id = :id", f=failures, id=case_id)
+        log_event(c, case_id, "identity_failed" if failures < MAX_IDENTITY_ATTEMPTS else "identity_locked",
+                  {"attempt": failures})
+        return {"verified": False, "attempts_left": MAX_IDENTITY_ATTEMPTS - failures}
 
 
 def add_note(case_id: str, note: str) -> dict:

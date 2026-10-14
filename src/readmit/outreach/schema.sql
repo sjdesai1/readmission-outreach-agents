@@ -101,3 +101,5 @@ alter table outreach.providers add column if not exists languages text[] not nul
 alter table outreach.cases add column if not exists pcp_provider_id text;        -- the patient's own doctor
 alter table outreach.cases add column if not exists follow_up_by timestamp;      -- target date for the visit
 alter table outreach.messages add column if not exists deliver_at timestamp;     -- held for quiet hours
+alter table outreach.cases add column if not exists identity_verified_at timestamp;  -- confirmed by year of birth
+alter table outreach.cases add column if not exists identity_failures int not null default 0;
