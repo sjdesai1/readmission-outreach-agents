@@ -5,6 +5,8 @@ load_context -> input_guard -> route
   inbound_reply -> reply_interpreter -> by intent:
         wants_visit / reschedule -> scheduler -> message_writer
         question / barrier       -> care_planner -> message_writer
+        decline / channel_change -> message_writer
+        clinical_question / wants_human / symptom / abusive -> escalate   (nurse handoff comes in step 5)
         opt_out                  -> opt_out
         third_party              -> proxy_reply  (family member: privacy-safe template, no LLM)
         symptom / abusive        -> escalate
@@ -18,6 +20,7 @@ from langgraph.graph import END, START, StateGraph
 
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import check_draft, screen_inbound
+from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize_summary, render
 from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel
 from readmit.agents.stubs import STUBS
 
@@ -56,8 +59,10 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
         return {"now": now, "case": case, "skip": "case not open yet"}
     if state["trigger"] == "outreach_due" and case["status"] == "booked":
         return {"now": now, "case": case, "skip": "already booked"}
-    summary = await gw.call("patient_data", "get_patient_summary", case_id=cid)
-    thread = await gw.call("messaging", "get_thread", case_id=cid, limit=50) or []
+    # the patient's name never enters the state: agents, prompts and traces see {first_name} instead
+    summary, name = pseudonymize_summary(await gw.call("patient_data", "get_patient_summary", case_id=cid))
+    thread = [{**m, "body": pseudonymize(m["body"], name)}
+              for m in await gw.call("messaging", "get_thread", case_id=cid, limit=50) or []]
     older, recent = thread[:-RECENT], thread[-RECENT:]
     history = ""
     if older:
@@ -75,7 +80,8 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
     seed = f"{cid}|{state['trigger']}|{now}|{state.get('inbound') or ''}"
     turn_key = f"{cid}:{hashlib.sha256(seed.encode()).hexdigest()[:10]}"
     return {"now": now, "case": case, "summary": summary, "thread": recent, "history": history,
-            "unclear_streak": streak, "turn_key": turn_key, "skip": None, "revisions": 0}
+            "unclear_streak": streak, "turn_key": turn_key, "skip": None, "revisions": 0,
+            "inbound": pseudonymize(state.get("inbound"), name)}
 
 
 async def input_guard(state: TurnState, gw: Gateway) -> dict:
@@ -89,8 +95,11 @@ async def input_guard(state: TurnState, gw: Gateway) -> dict:
 async def output_checks(state: TurnState, gw: Gateway) -> dict:
     sched = state.get("schedule") or {}
     stay = (state.get("summary") or {}).get("stay") or {}
-    problems = check_draft(state["draft"]["body"], reply_channel(state), sched.get("offered") or [],
-                           sched.get("appointment"), private_terms=[stay.get("diagnosis_group")])
+    channel = reply_channel(state)
+    # the portal is logged in (identity verified), so clinical details may appear there; nowhere else
+    private = [] if channel == "portal" else [stay.get("diagnosis_group")]
+    problems = check_draft(state["draft"]["body"], channel, sched.get("offered") or [],
+                           sched.get("appointment"), private_terms=private)
     if problems:
         return {"problems": problems, "revisions": state.get("revisions", 0) + 1}
     return {"problems": []}
@@ -100,8 +109,12 @@ async def send(state: TurnState, gw: Gateway) -> dict:
     cid, channel, draft = state["case_id"], reply_channel(state), state["draft"]
     intent = (state.get("intent") or {}).get("intent")
     try:
-        msg = await gw.call("messaging", "send_message", case_id=cid, channel=channel, body=draft["body"],
-                            subject=draft.get("subject"), idempotency_key=f"{state['turn_key']}:msg")
+        # the real name is looked up only here, at the last moment, and never written back into the state
+        name = (await gw.call("patient_data", "get_patient_summary", case_id=cid))["patient"]["first_name"]
+        msg = await gw.call("messaging", "send_message", case_id=cid, channel=channel,
+                            body=render(draft["body"], name),
+                            subject=render(draft["subject"], name) if draft.get("subject") else None,
+                            idempotency_key=f"{state['turn_key']}:msg")
         if intent:
             await gw.call("cases", "add_case_note", case_id=cid, note=f"intent: {intent}")
         if intent == "decline":
@@ -195,6 +208,8 @@ def after_guard(state: TurnState) -> str:
 
 
 def after_interpreter(state: TurnState) -> str:
+    if state.get("escalate_reason"):
+        return "escalate"
     intent = state["intent"]["intent"]
     if intent in ("wants_visit", "reschedule"):
         return "scheduler"
@@ -204,7 +219,7 @@ def after_interpreter(state: TurnState) -> str:
         return "opt_out"
     if intent == "third_party":
         return "proxy_reply"
-    if intent in ("symptom", "abusive"):
+    if intent in ("symptom", "abusive", "clinical_question", "wants_human"):
         return "escalate"
     if intent == "unclear" and state.get("unclear_streak", 0) >= 1:
         return "escalate"
@@ -284,6 +299,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
 
 async def run_turn(gateway: Gateway, case_id: str, trigger: str, inbound: str | None = None,
                    inbound_channel: str | None = None, agents: dict | None = None) -> TurnState:
+    configure_tracing()
     graph = build_graph(gateway, agents)
     state = {"case_id": case_id, "trigger": trigger, "inbound": inbound, "inbound_channel": inbound_channel,
              "path": []}

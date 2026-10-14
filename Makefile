@@ -72,5 +72,5 @@ inspector:      ## open MCP Inspector (browser UI) to call any server's tools by
 	npx -y @modelcontextprotocol/inspector
 
 # ---- milestone 3: multi-agent graph ----
-turn:           ## one agent turn by hand: make turn c=C000856 at=2026-09-10T09:00   (add reply="yes" ch=sms)
-	uv run python -m readmit.agents.run $(c) $(if $(at),--at $(at)) $(if $(reply),--reply "$(reply)" --channel $(or $(ch),sms))
+turn:           ## one agent turn by hand: make turn c=C000856 at=2026-09-10T09:00   (add reply="yes" ch=sms, stub=1)
+	PYTHONWARNINGS="ignore:authlib.jose module is deprecated" uv run python -m readmit.agents.run $(c) $(if $(at),--at $(at)) $(if $(reply),--reply "$(reply)" --channel $(or $(ch),sms)) $(if $(stub),--stub)

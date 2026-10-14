@@ -56,3 +56,11 @@ def test_family_member_replies_are_recognised():
 def test_diagnosis_never_appears_in_a_message():
     assert check_draft("Hope your heart failure is improving!", "sms", [], None, ["Heart failure"])
     assert check_draft("Hope you're feeling better!", "sms", [], None, ["Heart failure"]) == []
+
+
+def test_tone_rules():
+    assert check_draft("Hi {first_name}, would Thu Sep 10, 9:00 AM work?", "sms", SLOTS, None) == []
+    assert any("ALL CAPS" in p for p in check_draft("Please RESPOND today", "sms", [], None))
+    assert any("exclamation" in p for p in check_draft("Hi! Hope you're well!", "sms", [], None))
+    assert any("pressuring" in p for p in check_draft("You must book immediately.", "sms", [], None))
+    assert check_draft("Reply STOP to opt out.", "sms", [], None) == []

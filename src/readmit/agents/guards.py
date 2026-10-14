@@ -2,7 +2,8 @@
 
 Input:  STOP keywords close the case, emergencies go straight to a nurse, someone other than the patient gets
         a privacy-safe reply, injection attempts are flagged.
-Output: no invented times, no contact details, no diagnosis, no booking claims without a booking, fits the channel.
+Output: no invented times, no contact details, no diagnosis, no booking claims without a booking, fits the channel,
+        respectful tone (no shouting, no pressure).
 """
 import re
 
@@ -33,6 +34,11 @@ CHANNEL_MAX_CHARS = {"sms": 320, "portal": 1200, "email": 1200, "phone": 900}
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 PHONE_RE = re.compile(r"\+?\d[\d\-\s().]{8,}\d")
 PLACEHOLDER_RE = re.compile(r"\[[A-Za-z _]+\]|\{[A-Za-z_]+\}")
+ALLOWED_TOKENS = {"{first_name}"}            # filled in at send time
+SHOUTING_RE = re.compile(r"\b[A-Z]{4,}\b")
+SHOUT_OK = {"STOP", "START", "HELP"}
+PRESSURE_RE = re.compile(r"\b(urgent|urgently|immediately|you must|failure to|final notice|last chance|"
+                         r"or else|required to respond|act now)\b", re.IGNORECASE)
 TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s?m\b\.?", re.IGNORECASE)
 CLOCK_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
 MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
@@ -89,8 +95,14 @@ def check_draft(body: str, channel: str | None, slots: list[dict], appointment: 
     for term in private_terms or []:
         if term and re.search(rf"\b{re.escape(term)}\b", body, re.IGNORECASE):
             problems.append(f"mentions a private health detail ({term}); keep messages free of diagnoses")
-    if PLACEHOLDER_RE.search(body):
-        problems.append("contains an unfilled placeholder like [Name]")
+    if any(m.group(0) not in ALLOWED_TOKENS for m in PLACEHOLDER_RE.finditer(body)):
+        problems.append("contains an unfilled placeholder like [Name]; use only {first_name}")
+    if any(w not in SHOUT_OK for w in SHOUTING_RE.findall(body)):
+        problems.append("uses ALL CAPS words; write in normal case")
+    if body.count("!") > 1:
+        problems.append("more than one exclamation mark; keep the tone calm")
+    if m := PRESSURE_RE.search(body):
+        problems.append(f"pressuring language ({m.group(0)}); be warm and never pushy")
     known = slots + ([appointment] if appointment else [])
     times, dates = _allowed_times(known)
     for m in TIME_RE.finditer(body):
