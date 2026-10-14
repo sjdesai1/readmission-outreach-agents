@@ -3,6 +3,7 @@
 What's tested is everything around the model: the right prompt goes in, the answer is validated and checked,
 the rules override the model where they must, and failures degrade safely.
 """
+
 import asyncio
 import json
 
@@ -28,25 +29,34 @@ def fake_llm(monkeypatch):
         if isinstance(a, Exception):
             raise a
         return schema.model_validate(a(json.loads(user)) if callable(a) else a), None
+
     monkeypatch.setattr(llm_agents, "complete_json", complete_json)
     return answers, prompts
 
 
-PLAN = {"channel": "email", "prefer_telehealth": True, "approach": "Short email.", "talking_points": [],
-        "referrals": [{"type": "transport", "reason": "Notes say no car."}]}
+PLAN = {
+    "channel": "email",
+    "prefer_telehealth": True,
+    "approach": "Short email.",
+    "talking_points": [],
+    "referrals": [{"type": "transport", "reason": "Notes say no car."}],
+}
 
 
 def offer(user):
-    return {"subject": "Your follow-up visit",
-            "body": f"Hi {{first_name}}, could you come in {user['offered_slots'][0]['when']}?"}
+    return {
+        "subject": "Your follow-up visit",
+        "body": f"Hi {{first_name}}, could you come in {user['offered_slots'][0]['when']}?",
+    }
 
 
 def turn(case_id, reply=None, channel="email"):
     if reply:
         store.record_inbound(case_id, channel, reply)
     trigger = "inbound_reply" if reply else "outreach_due"
-    return asyncio.run(run_turn(Gateway.in_memory(), case_id, trigger, reply, channel if reply else None,
-                                agents=llm_agents.LLM_AGENTS))
+    return asyncio.run(
+        run_turn(Gateway.in_memory(), case_id, trigger, reply, channel if reply else None, agents=llm_agents.LLM_AGENTS)
+    )
 
 
 def test_full_outreach_turn_with_llm_agents(fake_llm):
@@ -55,32 +65,35 @@ def test_full_outreach_turn_with_llm_agents(fake_llm):
     s = turn("C1")
     assert s["outcome"]["action"] == "sent"
     sent = store.get_thread("C1")[-1]
-    assert sent["body"].startswith("Hi Maria,")                         # name filled in at send time
+    assert sent["body"].startswith("Hi Maria,")  # name filled in at send time
     assert [p["task"] for p in prompts] == ["plan_care", "write_message"]
-    assert all("Maria" not in p["user"] for p in prompts)                # the LLM never saw the name
-    assert "Maria" not in json.dumps(s, default=str)                     # nor did the state or the traces
+    assert all("Maria" not in p["user"] for p in prompts)  # the LLM never saw the name
+    assert "Maria" not in json.dumps(s, default=str)  # nor did the state or the traces
     assert [e["type"] for e in store.get_case("C1")["recent_events"]][:1] == ["referral_requested"]
 
 
 def test_planner_cannot_pick_a_channel_without_consent(fake_llm):
     answers, _ = fake_llm
     answers |= {"plan_care": {**PLAN, "channel": "sms", "referrals": []}, "write_message": offer}
-    s = turn("C1")                                                       # Maria only consented to email
+    s = turn("C1")  # Maria only consented to email
     assert s["plan"]["channel"] == "email" and s["plan"]["channel_overridden"]
 
 
 def test_low_confidence_reply_becomes_unclear(fake_llm):
     answers, _ = fake_llm
-    answers |= {"interpret_reply": {"intent": "wants_visit", "accepts_offer": True, "confidence": 0.3},
-                "write_message": {"subject": None, "body": "Sorry {first_name}, could you say that another way?"}}
+    answers |= {
+        "interpret_reply": {"intent": "wants_visit", "accepts_offer": True, "confidence": 0.3},
+        "write_message": {"subject": None, "body": "Sorry {first_name}, could you say that another way?"},
+    }
     s = turn("C1", "mmm maybe")
     assert s["intent"]["intent"] == "unclear" and not s["intent"]["accepts"]
 
 
 def test_clinical_question_goes_to_a_nurse_not_the_writer(fake_llm):
     answers, prompts = fake_llm
-    answers |= {"interpret_reply": {"intent": "clinical_question", "question": "ibuprofen with my meds?",
-                                    "confidence": 0.95}}
+    answers |= {
+        "interpret_reply": {"intent": "clinical_question", "question": "ibuprofen with my meds?", "confidence": 0.95}
+    }
     s = turn("C1", "can I take ibuprofen with my new pills?")
     assert s["path"][-1] == "escalate" and "write_message" not in [p["task"] for p in prompts]
 
@@ -106,6 +119,7 @@ def test_writer_gets_checker_feedback_on_rewrite(fake_llm):
         if user["checker_feedback"]:
             return offer(user)
         return {"subject": "x", "body": "Hi {first_name}, URGENT: book now!!"}
+
     answers |= {"plan_care": {**PLAN, "referrals": []}, "write_message": writer}
     s = turn("C1")
     assert s["outcome"]["action"] == "sent"
@@ -115,28 +129,44 @@ def test_writer_gets_checker_feedback_on_rewrite(fake_llm):
 
 def test_never_books_a_time_the_patient_ruled_out(fake_llm):
     answers, _ = fake_llm
-    answers |= {"interpret_reply": {"intent": "wants_visit", "accepts_offer": True, "preferred_days": ["Thursday"],
-                                    "earliest_time": "14:00", "confidence": 0.9},
-                "write_message": offer}
-    s = turn("C1", "cant do 9, anything thursday after 2?")        # fixture slots are all at 9:00
+    answers |= {
+        "interpret_reply": {
+            "intent": "wants_visit",
+            "accepts_offer": True,
+            "preferred_days": ["Thursday"],
+            "earliest_time": "14:00",
+            "confidence": 0.9,
+        },
+        "write_message": offer,
+    }
+    s = turn("C1", "cant do 9, anything thursday after 2?")  # fixture slots are all at 9:00
     assert s["schedule"]["appointment"] is None and s["schedule"]["note"]
     assert store.get_case("C1")["status"] != "booked"
 
 
 def test_books_when_the_choice_fits(fake_llm):
     answers, _ = fake_llm
-    answers |= {"interpret_reply": {"intent": "wants_visit", "accepts_offer": True, "preferred_days": ["Friday"],
-                                    "part_of_day": "morning", "choice": "friday morning", "confidence": 0.9},
-                "write_message": lambda u: {"subject": "Booked",
-                                            "body": f"You're booked for {u['appointment']['when']}."}}
+    answers |= {
+        "interpret_reply": {
+            "intent": "wants_visit",
+            "accepts_offer": True,
+            "preferred_days": ["Friday"],
+            "part_of_day": "morning",
+            "choice": "friday morning",
+            "confidence": 0.9,
+        },
+        "write_message": lambda u: {"subject": "Booked", "body": f"You're booked for {u['appointment']['when']}."},
+    }
     s = turn("C1", "friday morning works")
     assert s["schedule"]["appointment"]["when"].startswith("Fri Sep 11")
 
 
 def test_patient_switches_channel_and_gets_the_answer_there(fake_llm):
     answers, _ = fake_llm
-    answers |= {"interpret_reply": {"intent": "channel_change", "new_channel": "portal", "confidence": 0.9},
-                "write_message": {"subject": "Got it", "body": "Got it {first_name}, the portal it is."}}
+    answers |= {
+        "interpret_reply": {"intent": "channel_change", "new_channel": "portal", "confidence": 0.9},
+        "write_message": {"subject": "Got it", "body": "Got it {first_name}, the portal it is."},
+    }
     s = turn("C2", "can you message me in the portal instead", channel="sms")
     assert "apply_channel_change" in s["path"] and s["outcome"]["channel"] == "portal"
     assert store.patient_summary("C2")["contact"]["preferred_channel"] == "portal"
@@ -144,7 +174,9 @@ def test_patient_switches_channel_and_gets_the_answer_there(fake_llm):
 
 def test_channel_change_without_contact_details_is_explained(fake_llm):
     answers, _ = fake_llm
-    answers |= {"interpret_reply": {"intent": "channel_change", "new_channel": "sms", "confidence": 0.9},
-                "write_message": {"subject": "Sorry", "body": "Sorry {first_name}, a nurse will help with that."}}
-    s = turn("C1", "text me instead", channel="email")                    # no mobile number on file
+    answers |= {
+        "interpret_reply": {"intent": "channel_change", "new_channel": "sms", "confidence": 0.9},
+        "write_message": {"subject": "Sorry", "body": "Sorry {first_name}, a nurse will help with that."},
+    }
+    s = turn("C1", "text me instead", channel="email")  # no mobile number on file
     assert not s["channel_change"]["ok"] and s["outcome"]["channel"] == "email"

@@ -1,4 +1,5 @@
 """Shared plumbing for the MCP servers."""
+
 import argparse
 
 from fastmcp import FastMCP
@@ -7,7 +8,7 @@ from fastmcp.exceptions import ToolError
 from readmit.outreach.store import StoreError
 
 PORTS = {"patient_data": 8101, "scheduling": 8102, "messaging": 8103, "referrals": 8104, "cases": 8105}
-READ_ONLY = {"readOnlyHint": True}          # MCP tool annotations: tell clients which tools change nothing
+READ_ONLY = {"readOnlyHint": True}  # MCP tool annotations: tell clients which tools change nothing
 WRITES = {"readOnlyHint": False, "idempotentHint": True}
 
 

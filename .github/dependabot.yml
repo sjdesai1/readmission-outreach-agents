@@ -1,0 +1,14 @@
+# Weekly update PRs for GitHub Actions and base Docker images.
+# Python packages are upgraded deliberately (`make upgrade`, then a reviewed PR): the ML stack is pinned on
+# purpose (the MLflow client must match the server) and uv.lock must be regenerated with them.
+# Known vulnerabilities in Python packages are reported by pip-audit in CI.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories: ["/docker/app", "/docker/airflow", "/docker/mlflow"]
+    schedule:
+      interval: weekly

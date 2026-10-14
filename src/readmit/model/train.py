@@ -7,6 +7,7 @@ Compares on the TEST split (later in time than training):
 Registers "structured+extracted" XGBoost as readmission-risk@champion, with tier cut points
 fixed from the test-set score distribution (high = top 10%, medium = next 20%).
 """
+
 import json
 
 import mlflow
@@ -27,10 +28,19 @@ from readmit.model.metrics import calibration_table, evaluate, paired_auroc_diff
 
 MODEL_NAME = "readmission-risk"
 CHAMPION_VARIANT = "structured+extracted"
-XGB_PARAMS = {"n_estimators": 600, "learning_rate": 0.03, "max_depth": 3, "min_child_weight": 5,
-              "subsample": 0.8, "colsample_bytree": 0.8, "reg_lambda": 1.0, "eval_metric": "logloss",
-              "early_stopping_rounds": 50, "random_state": 7}
-TIER_FRACTIONS = {"high": 0.10, "medium": 0.30}   # cumulative: top 10% high, next 20% medium
+XGB_PARAMS = {
+    "n_estimators": 600,
+    "learning_rate": 0.03,
+    "max_depth": 3,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "eval_metric": "logloss",
+    "early_stopping_rounds": 50,
+    "random_state": 7,
+}
+TIER_FRACTIONS = {"high": 0.10, "medium": 0.30}  # cumulative: top 10% high, next 20% medium
 
 
 def load():
@@ -80,8 +90,11 @@ def main():
     # champion details: by patient group, calibration, tier cut points
     X_tr, X_te, p = frames[CHAMPION_VARIANT]
     champ = test.assign(p=p)
-    by_group = {g: evaluate(d["readmit_30d"].astype(int), d["p"])
-                for g, d in champ.groupby("patient_status") if d["readmit_30d"].nunique() == 2}
+    by_group = {
+        g: evaluate(d["readmit_30d"].astype(int), d["p"])
+        for g, d in champ.groupby("patient_status")
+        if d["readmit_30d"].nunique() == 2
+    }
     cuts = {t: float(np.quantile(p, 1 - f)) for t, f in TIER_FRACTIONS.items()}
     # do the LLM-extracted note features really help, or is the difference noise?
     notes_lift = paired_auroc_diff(y_te, frames["structured+extracted"][2], frames["structured"][2])
@@ -89,16 +102,28 @@ def main():
 
     print(f"\n  {'model':<32} {'AUROC':>6} {'AUPRC':>6} {'recall@10%':>10} {'recall@30%':>10}")
     for name, m in results.items():
-        print(f"  {name:<32} {m['auroc']:>6.3f} {m['auprc']:>6.3f} {m['recall_top10']:>10.2f} {m['recall_top30']:>10.2f}")
+        print(
+            f"  {name:<32} {m['auroc']:>6.3f} {m['auprc']:>6.3f} {m['recall_top10']:>10.2f} {m['recall_top30']:>10.2f}"
+        )
     print("\n  champion by patient group: " + ", ".join(f"{g} AUROC {m['auroc']:.3f}" for g, m in by_group.items()))
     print(f"  calibration (predicted vs observed by quintile): {calib}")
-    print(f"  notes lift (AUROC, extracted - structured): {notes_lift['diff']:+.3f}, "
-          f"95% CI [{notes_lift['ci95'][0]:+.3f}, {notes_lift['ci95'][1]:+.3f}]")
+    print(
+        f"  notes lift (AUROC, extracted - structured): {notes_lift['diff']:+.3f}, "
+        f"95% CI [{notes_lift['ci95'][0]:+.3f}, {notes_lift['ci95'][1]:+.3f}]"
+    )
     print(f"  tier cut points: high >= {cuts['high']:.3f}, medium >= {cuts['medium']:.3f}")
 
-    report = {"results": results, "champion_variant": CHAMPION_VARIANT, "by_patient_group": by_group,
-              "calibration": calib, "tier_cuts": cuts, "notes_lift": notes_lift, "feature_columns": list(X_tr.columns),
-              "train_stays": len(train), "test_stays": len(test)}
+    report = {
+        "results": results,
+        "champion_variant": CHAMPION_VARIANT,
+        "by_patient_group": by_group,
+        "calibration": calib,
+        "tier_cuts": cuts,
+        "notes_lift": notes_lift,
+        "feature_columns": list(X_tr.columns),
+        "train_stays": len(train),
+        "test_stays": len(test),
+    }
     out = REPO_ROOT / "data" / "reports"
     out.mkdir(parents=True, exist_ok=True)
     (out / "model_eval.json").write_text(json.dumps(report, indent=2))
@@ -110,21 +135,35 @@ def main():
         with mlflow.start_run(run_name=name):
             mlflow.log_metrics(m)
     with mlflow.start_run(run_name=f"champion: xgboost ({CHAMPION_VARIANT})") as run:
-        mlflow.log_params({k: v for k, v in XGB_PARAMS.items()} | {"variant": CHAMPION_VARIANT,
-                          "best_iteration": int(models[CHAMPION_VARIANT].best_iteration)})
+        mlflow.log_params(
+            {k: v for k, v in XGB_PARAMS.items()}
+            | {"variant": CHAMPION_VARIANT, "best_iteration": int(models[CHAMPION_VARIANT].best_iteration)}
+        )
         mlflow.log_metrics(results[f"xgboost ({CHAMPION_VARIANT})"])
         mlflow.log_metrics({f"tier_cut_{t}": c for t, c in cuts.items()})
         mlflow.log_artifact(str(out / "model_eval.json"))
-        info = mlflow.xgboost.log_model(models[CHAMPION_VARIANT], name="model", registered_model_name=MODEL_NAME,
-                                        input_example=X_tr.head(3))
+        info = mlflow.xgboost.log_model(
+            models[CHAMPION_VARIANT], name="model", registered_model_name=MODEL_NAME, input_example=X_tr.head(3)
+        )
     version = getattr(info, "registered_model_version", None) or max(
-        int(v.version) for v in MlflowClient().search_model_versions(f"name='{MODEL_NAME}'"))
+        int(v.version) for v in MlflowClient().search_model_versions(f"name='{MODEL_NAME}'")
+    )
     MlflowClient().set_registered_model_alias(MODEL_NAME, "champion", version)
 
     # what the scorer needs, next to the scores it produces
-    meta = pd.DataFrame([{"model_name": MODEL_NAME, "model_version": str(version), "run_id": run.info.run_id,
-                          "variant": CHAMPION_VARIANT, "tier_cut_high": cuts["high"],
-                          "tier_cut_medium": cuts["medium"], "feature_columns": json.dumps(list(X_tr.columns))}])
+    meta = pd.DataFrame(
+        [
+            {
+                "model_name": MODEL_NAME,
+                "model_version": str(version),
+                "run_id": run.info.run_id,
+                "variant": CHAMPION_VARIANT,
+                "tier_cut_high": cuts["high"],
+                "tier_cut_medium": cuts["medium"],
+                "feature_columns": json.dumps(list(X_tr.columns)),
+            }
+        ]
+    )
     db.write(meta, "scoring.model_meta")
     print(f"\n  registered {MODEL_NAME} version {version} as @champion")
 

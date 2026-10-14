@@ -6,6 +6,7 @@ Run inside Airflow (via DAG):  m0_smoke DAG -> same module, container hostnames
 Each check is independent: one failure doesn't hide the others.
 Exit code 1 if anything fails, so CI or a Makefile can stop on it.
 """
+
 import smtplib
 import sys
 import time
@@ -17,11 +18,12 @@ import requests
 from readmit.config import settings
 
 TIMEOUT = 15
-results: list[tuple[str, str, str]] = []   # (check, status, detail)
+results: list[tuple[str, str, str]] = []  # (check, status, detail)
 
 
 def check(name):
     """Decorator: run a check, record PASS / FAIL / SKIP with a one-line detail."""
+
     def wrap(fn):
         def run():
             try:
@@ -30,13 +32,16 @@ def check(name):
                 results.append((name, status, detail.removeprefix("SKIP: ") if detail else ""))
             except Exception as e:  # noqa: BLE001 - a smoke test reports every failure, whatever it is
                 results.append((name, "FAIL", f"{type(e).__name__}: {str(e)[:160]}"))
+
         return run
+
     return wrap
 
 
 @check("postgres (app db)")
 def postgres():
     import sqlalchemy as sa
+
     eng = sa.create_engine(settings.db_url, connect_args={"connect_timeout": TIMEOUT})
     with eng.connect() as c:
         version = c.execute(sa.text("select version()")).scalar()
@@ -46,12 +51,13 @@ def postgres():
 @check("mlflow tracking + artifacts")
 def mlflow_check():
     import mlflow
+
     mlflow.set_tracking_uri(settings.mlflow_uri)
     mlflow.set_experiment("m0-smoke")
     with mlflow.start_run(run_name="smoke") as run:
         mlflow.log_param("check", "m0")
         mlflow.log_metric("ok", 1.0)
-        mlflow.log_text("smoke test artifact", "smoke.txt")   # proves artifact storage works
+        mlflow.log_text("smoke test artifact", "smoke.txt")  # proves artifact storage works
     return f"run {run.info.run_id[:8]} logged"
 
 
@@ -81,11 +87,17 @@ def airflow():
 def gemini_models():
     if not settings.gemini_api_key:
         return "SKIP: GEMINI_API_KEY not set"
-    r = requests.get("https://generativelanguage.googleapis.com/v1beta/models",
-                     params={"key": settings.gemini_api_key, "pageSize": 200}, timeout=TIMEOUT)
+    r = requests.get(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        params={"key": settings.gemini_api_key, "pageSize": 200},
+        timeout=TIMEOUT,
+    )
     r.raise_for_status()
-    names = sorted(m["name"].removeprefix("models/") for m in r.json().get("models", [])
-                   if "generateContent" in m.get("supportedGenerationMethods", []) and "gemini" in m["name"])
+    names = sorted(
+        m["name"].removeprefix("models/")
+        for m in r.json().get("models", [])
+        if "generateContent" in m.get("supportedGenerationMethods", []) and "gemini" in m["name"]
+    )
     return f"{len(names)} models, e.g. " + ", ".join(names[:8])
 
 
@@ -100,8 +112,9 @@ def gemini_call():
 
     @traceable(name="m0_smoke_llm_call", client=client, tags=["m0", "smoke"])
     def ask(model):
-        resp = litellm.completion(model=model, timeout=30,
-                                  messages=[{"role": "user", "content": "Reply with exactly: OK"}])
+        resp = litellm.completion(
+            model=model, timeout=30, messages=[{"role": "user", "content": "Reply with exactly: OK"}]
+        )
         return resp.choices[0].message.content.strip()
 
     used, answer = settings.llm_model, None
@@ -111,7 +124,7 @@ def gemini_call():
         used = settings.llm_fallback_model
         answer = ask(used)
     if client is not None and hasattr(client, "flush"):
-        client.flush()   # send the trace before the process exits
+        client.flush()  # send the trace before the process exits
     traced = "trace sent" if client else "LangSmith key not set, no trace"
     return f"{used} answered {answer!r}; {traced}"
 
@@ -121,6 +134,7 @@ def langsmith_key():
     if not settings.langsmith_api_key:
         return "SKIP: LANGSMITH_API_KEY not set"
     from langsmith import Client
+
     list(Client().list_projects(limit=1))
     return f"key valid, project '{settings.langsmith_project}'"
 
@@ -133,7 +147,10 @@ def main() -> int:
     for name, status, detail in results:
         print(f"  {status:4}  {name:<{width}}  {detail}")
     failed = [n for n, s, _ in results if s == "FAIL"]
-    print(f"\n  {len(results) - len(failed)}/{len(results)} passed or skipped" + (f"; FAILED: {', '.join(failed)}" if failed else ""))
+    print(
+        f"\n  {len(results) - len(failed)}/{len(results)} passed or skipped"
+        + (f"; FAILED: {', '.join(failed)}" if failed else "")
+    )
     return 1 if failed else 0
 
 

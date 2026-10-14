@@ -6,6 +6,7 @@ Answer key = truth.documented: which factors were actually written in each stay'
 prediction cutoff. (The extractor can only be expected to find what was written.)
 Logs metrics to MLflow (experiment "note-extraction") and writes data/reports/extraction_eval.json.
 """
+
 import json
 
 import pandas as pd
@@ -28,13 +29,18 @@ def score(pred: pd.DataFrame, truth: pd.DataFrame) -> dict:
         tp_all, fp_all, fn_all = tp_all + tp, fp_all + fp, fn_all + fn
     prec = tp_all / (tp_all + fp_all) if tp_all + fp_all else None
     rec = tp_all / (tp_all + fn_all) if tp_all + fn_all else None
-    overall = {"precision": prec, "recall": rec, "f1": 2 * prec * rec / (prec + rec) if prec and rec else None,
-               "stays_scored": len(df)}
+    overall = {
+        "precision": prec,
+        "recall": rec,
+        "f1": 2 * prec * rec / (prec + rec) if prec and rec else None,
+        "stays_scored": len(df),
+    }
     return {"overall": overall, "per_factor": per}
 
 
 def usage_summary() -> dict:
     from readmit import db
+
     u = db.read("""select count(*) as calls,
                           sum(case when cached then 1 else 0 end) as cached_calls,
                           sum(case when not ok then 1 else 0 end) as failed_calls,
@@ -64,13 +70,19 @@ def main():
 
     print(f"\n  {'factor':<20} {'precision':>9} {'recall':>7} {'f1':>6}   tp  fp  fn")
     for f, m in result["per_factor"].items():
+
         def fmt(x):
             return f"{x:.2f}" if x is not None else "  - "
-        print(f"  {f:<20} {fmt(m['precision']):>9} {fmt(m['recall']):>7} {fmt(m['f1']):>6}"
-              f"  {m['tp']:>3} {m['fp']:>3} {m['fn']:>3}")
+
+        print(
+            f"  {f:<20} {fmt(m['precision']):>9} {fmt(m['recall']):>7} {fmt(m['f1']):>6}"
+            f"  {m['tp']:>3} {m['fp']:>3} {m['fn']:>3}"
+        )
     o = result["overall"]
-    print(f"\n  overall: precision {o['precision']:.3f}, recall {o['recall']:.3f}, f1 {o['f1']:.3f} "
-          f"on {o['stays_scored']} stays")
+    print(
+        f"\n  overall: precision {o['precision']:.3f}, recall {o['recall']:.3f}, f1 {o['f1']:.3f} "
+        f"on {o['stays_scored']} stays"
+    )
     print(f"  usage: {json.dumps(result['usage'])}")
 
     out = REPO_ROOT / "data" / "reports"
@@ -80,8 +92,9 @@ def main():
     mlflow.set_tracking_uri(settings.mlflow_uri)
     mlflow.set_experiment("note-extraction")
     with mlflow.start_run(run_name=f"extract_social_{PROMPT_VERSION}"):
-        mlflow.log_params({"prompt_version": PROMPT_VERSION, "model": settings.llm_model,
-                           "stays_scored": o["stays_scored"]})
+        mlflow.log_params(
+            {"prompt_version": PROMPT_VERSION, "model": settings.llm_model, "stays_scored": o["stays_scored"]}
+        )
         mlflow.log_metrics({"precision": o["precision"] or 0, "recall": o["recall"] or 0, "f1": o["f1"] or 0})
         for f, m in result["per_factor"].items():
             if m["f1"] is not None:

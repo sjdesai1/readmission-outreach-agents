@@ -1,26 +1,61 @@
 """Model inputs. The same function builds features for training, testing and live scoring,
 so columns always line up (a classic source of silent production bugs)."""
+
 import pandas as pd
 
 from readmit.sim.notes import SOCIAL_FACTORS
 
-NUMERIC = ["age", "adi_decile", "length_of_stay_days", "charlson_index", "prior_admissions_12m", "ed_visits_6m",
-           "prior_30d_readmits_12m", "hemoglobin", "sodium", "creatinine", "albumin", "discharge_sbp",
-           "num_discharge_meds", "med_changes_count"]
-BOOLEAN = ["planned_admission", "icu_stay", "chf", "copd", "diabetes", "ckd", "cancer", "depression", "dementia",
-           "high_risk_med", "followup_scheduled_7d"]
-CATEGORIES = {   # fixed category lists: a category unseen in training can't create a new column at scoring time
+NUMERIC = [
+    "age",
+    "adi_decile",
+    "length_of_stay_days",
+    "charlson_index",
+    "prior_admissions_12m",
+    "ed_visits_6m",
+    "prior_30d_readmits_12m",
+    "hemoglobin",
+    "sodium",
+    "creatinine",
+    "albumin",
+    "discharge_sbp",
+    "num_discharge_meds",
+    "med_changes_count",
+]
+BOOLEAN = [
+    "planned_admission",
+    "icu_stay",
+    "chf",
+    "copd",
+    "diabetes",
+    "ckd",
+    "cancer",
+    "depression",
+    "dementia",
+    "high_risk_med",
+    "followup_scheduled_7d",
+]
+CATEGORIES = {  # fixed category lists: a category unseen in training can't create a new column at scoring time
     "sex": ["F", "M"],
     "payer": ["Medicare", "Medicare Advantage", "Medicaid", "Commercial", "Self-pay"],
     "admission_type": ["Emergency", "Urgent", "Elective"],
-    "primary_dx_group": ["Heart failure", "COPD exacerbation", "Pneumonia", "Sepsis", "Diabetes complication",
-                         "Acute MI", "Acute kidney injury", "GI bleed", "Cellulitis", "Other"],
+    "primary_dx_group": [
+        "Heart failure",
+        "COPD exacerbation",
+        "Pneumonia",
+        "Sepsis",
+        "Diabetes complication",
+        "Acute MI",
+        "Acute kidney injury",
+        "GI bleed",
+        "Cellulitis",
+        "Other",
+    ],
     "discharge_disposition": ["Home", "Home health", "SNF", "Against medical advice"],
 }
 VARIANTS = {
-    "structured": None,                    # what's in structured fields at discharge
-    "structured+extracted": "extracted",   # + social factors the LLM pulled from notes
-    "structured+true": "true",             # + the documented truth: upper bound for perfect extraction
+    "structured": None,  # what's in structured fields at discharge
+    "structured+extracted": "extracted",  # + social factors the LLM pulled from notes
+    "structured+true": "true",  # + the documented truth: upper bound for perfect extraction
 }
 
 
@@ -28,7 +63,7 @@ def build(stays: pd.DataFrame, social: pd.DataFrame | None = None) -> pd.DataFra
     """One row per stay, indexed by encounter_id. `social` adds the 7 note-derived flags."""
     X = stays.set_index("encounter_id")
     out = X[NUMERIC].astype(float)
-    out["albumin_missing"] = X["albumin"].isna().astype(int)        # not ordered = a signal in itself
+    out["albumin_missing"] = X["albumin"].isna().astype(int)  # not ordered = a signal in itself
     for c in BOOLEAN:
         out[c] = X[c].astype(bool).astype(int)
     for c, cats in CATEGORIES.items():

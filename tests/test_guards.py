@@ -1,4 +1,5 @@
 """Deterministic guardrails: no database, no LLM."""
+
 from readmit.agents.guards import check_draft, screen_inbound
 from readmit.agents.state import when
 
@@ -49,8 +50,8 @@ def test_family_member_replies_are_recognised():
     assert screen_inbound("This is his daughter, what was he admitted for?")["action"] == "third_party"
     assert screen_inbound("hi im james's wife he's sleeping")["action"] == "third_party"
     assert screen_inbound("Soy su hija, él está dormido")["action"] == "third_party"
-    assert screen_inbound("my daughter can drive me on tuesday")["action"] == "continue"     # patient talking
-    assert screen_inbound("this is his son, he has chest pain")["action"] == "emergency"     # emergency wins
+    assert screen_inbound("my daughter can drive me on tuesday")["action"] == "continue"  # patient talking
+    assert screen_inbound("this is his son, he has chest pain")["action"] == "emergency"  # emergency wins
 
 
 def test_diagnosis_never_appears_in_a_message():
@@ -68,9 +69,10 @@ def test_tone_rules():
 
 def test_booking_guard_respects_what_the_patient_asked():
     from readmit.agents.guards import search_window, slot_fits
+
     ask = {"preferred_days": ["Thursday"], "earliest_time": "14:00"}
-    assert slot_fits("2026-09-10T12:00:00", ask)                   # James: "can't do noon, thurs after 2"
-    assert slot_fits("2026-09-11T15:00:00", ask)                   # Friday
+    assert slot_fits("2026-09-10T12:00:00", ask)  # James: "can't do noon, thurs after 2"
+    assert slot_fits("2026-09-11T15:00:00", ask)  # Friday
     assert slot_fits("2026-09-10T15:00:00", ask) == []
     assert slot_fits("2026-09-10T09:00:00", {"part_of_day": "afternoon"})
     assert search_window(ask, "2026-09-10T09:00") == ("2026-09-10T14:00", "2026-09-11T00:00")

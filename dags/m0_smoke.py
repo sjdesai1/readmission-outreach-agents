@@ -5,6 +5,7 @@ Pattern used by every DAG in this project:
   project venv (/opt/app-venv), so Airflow's dependencies never clash with
   the ML / agent libraries.
 """
+
 from datetime import datetime
 
 from airflow.providers.standard.operators.bash import BashOperator
@@ -15,7 +16,7 @@ APP_PY = "cd /opt/project && /opt/app-venv/bin/python"
 
 @dag(
     dag_id="m0_smoke",
-    schedule=None,                     # run on demand only
+    schedule=None,  # run on demand only
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["milestone-0"],

@@ -1,5 +1,6 @@
 """Settings in one place. Every value comes from environment variables (.env on the laptop,
 docker-compose.yml overrides inside containers), so the same code runs in both places."""
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(REPO_ROOT / ".env", override=False)   # real environment variables win over .env
+load_dotenv(REPO_ROOT / ".env", override=False)  # real environment variables win over .env
 
 
 def _env(name: str, default: str = "") -> str:

@@ -2,6 +2,7 @@
 
 Tests never send traces to LangSmith, even if .env turns tracing on.
 """
+
 import os
 
 os.environ["LANGSMITH_TRACING"] = "false"
@@ -37,8 +38,14 @@ insert into scoring.scores values ('E1', 0.41, 'high', '[]', '["transport_barrie
 
 
 def slot(sid, start, mode="in_person", status="open"):
-    return {"slot_id": sid, "provider_id": "PRV01", "start_at": start, "end_at": start + timedelta(minutes=30),
-            "mode": mode, "status": status}
+    return {
+        "slot_id": sid,
+        "provider_id": "PRV01",
+        "start_at": start,
+        "end_at": start + timedelta(minutes=30),
+        "mode": mode,
+        "status": status,
+    }
 
 
 @pytest.fixture
@@ -61,14 +68,29 @@ def pg(monkeypatch):
         c.exec_driver_sql((Path(store.__file__).parent / "schema.sql").read_text())
         c.exec_driver_sql("insert into outreach.providers values ('PRV01', 'Dr. Test', 'primary care')")
     with db.transaction() as c:
-        for s in [slot("S1", NOW + timedelta(days=1)), slot("S2", NOW + timedelta(days=2)),
-                  slot("S3", NOW + timedelta(days=3), mode="telehealth"), slot("S4", NOW + timedelta(hours=1)),
-                  slot("S5", NOW + timedelta(days=4), status="held_other")]:
-            db.rows(c, """insert into outreach.slots (slot_id, provider_id, start_at, end_at, mode, status)
-                          values (:slot_id, :provider_id, :start_at, :end_at, :mode, :status)""", **s)
+        for s in [
+            slot("S1", NOW + timedelta(days=1)),
+            slot("S2", NOW + timedelta(days=2)),
+            slot("S3", NOW + timedelta(days=3), mode="telehealth"),
+            slot("S4", NOW + timedelta(hours=1)),
+            slot("S5", NOW + timedelta(days=4), status="held_other"),
+        ]:
+            db.rows(
+                c,
+                """insert into outreach.slots (slot_id, provider_id, start_at, end_at, mode, status)
+                          values (:slot_id, :provider_id, :start_at, :end_at, :mode, :status)""",
+                **s,
+            )
         for cid, eid, pid in [("C1", "E1", "P1"), ("C2", "E2", "P2")]:
-            db.rows(c, """insert into outreach.cases (case_id, encounter_id, patient_id, opened_at, tier, risk)
-                          values (:cid, :e, :p, :t, 'high', 0.4)""", cid=cid, e=eid, p=pid, t=NOW - timedelta(days=1))
+            db.rows(
+                c,
+                """insert into outreach.cases (case_id, encounter_id, patient_id, opened_at, tier, risk)
+                          values (:cid, :e, :p, :t, 'high', 0.4)""",
+                cid=cid,
+                e=eid,
+                p=pid,
+                t=NOW - timedelta(days=1),
+            )
     store.set_now(NOW)
     yield
     db.engine.cache_clear()

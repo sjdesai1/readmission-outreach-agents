@@ -3,6 +3,7 @@
 The LLM never sees the patient's name: it writes {first_name} and code fills it in at send time.
 Emails and phone numbers in free text are masked before any prompt, and again in LangSmith traces.
 """
+
 import copy
 import logging
 import re
@@ -59,6 +60,7 @@ def configure_tracing() -> None:
     Best effort: if the client was already created elsewhere, the token-based pseudonymization still holds."""
     try:
         from langsmith import run_trees
+
         run_trees.get_cached_client(hide_inputs=redact, hide_outputs=redact)
     except Exception as e:  # noqa: BLE001 - tracing setup must never stop a turn
         log.warning("trace redaction not installed: %s", e)

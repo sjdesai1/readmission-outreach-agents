@@ -12,6 +12,7 @@ What it handles, so no caller has to:
   * tracing        every real call is a LangSmith run with task, prompt version, model, tokens
   * cost log       every call (cached or not) is a row in ops.llm_calls: tokens, cost, latency, outcome
 """
+
 import hashlib
 import json
 import sys
@@ -85,6 +86,7 @@ def _log(task, prompt_version, meta: CallMeta | None, ok: bool, error: str | Non
     global _TABLE_READY
     try:
         from readmit import db
+
         if not _TABLE_READY:
             db.ensure_schemas()
             db.execute("""create table if not exists ops.llm_calls (
@@ -92,13 +94,22 @@ def _log(task, prompt_version, meta: CallMeta | None, ok: bool, error: str | Non
                 ok boolean, error text, latency_ms int, input_tokens int, output_tokens int,
                 cost_usd double precision, repaired boolean)""")
             _TABLE_READY = True
-        db.execute("""insert into ops.llm_calls (task, prompt_version, model, cached, ok, error, latency_ms,
+        db.execute(
+            """insert into ops.llm_calls (task, prompt_version, model, cached, ok, error, latency_ms,
                       input_tokens, output_tokens, cost_usd, repaired)
                       values (:task, :pv, :model, :cached, :ok, :error, :lat, :itok, :otok, :cost, :rep)""",
-                   task=task, pv=prompt_version, model=model, cached=bool(meta and meta.cached), ok=ok,
-                   error=(error or "")[:500] or None, lat=meta.latency_ms if meta else None,
-                   itok=meta.input_tokens if meta else None, otok=meta.output_tokens if meta else None,
-                   cost=meta.cost_usd if meta else None, rep=bool(meta and meta.repaired))
+            task=task,
+            pv=prompt_version,
+            model=model,
+            cached=bool(meta and meta.cached),
+            ok=ok,
+            error=(error or "")[:500] or None,
+            lat=meta.latency_ms if meta else None,
+            itok=meta.input_tokens if meta else None,
+            otok=meta.output_tokens if meta else None,
+            cost=meta.cost_usd if meta else None,
+            rep=bool(meta and meta.repaired),
+        )
     except Exception as e:  # noqa: BLE001 - logging is best effort: warn, never crash the pipeline
         print(f"  [llm] could not write to ops.llm_calls: {str(e)[:120]}", file=sys.stderr)
 
@@ -109,8 +120,7 @@ def _call_model(model: str, messages: list[dict], **_trace_info) -> dict:
     """One API call. Traced in LangSmith; `_trace_info` only labels the trace."""
     _wait_turn()
     start = time.monotonic()
-    resp = litellm.completion(model=model, messages=messages, timeout=90,
-                              response_format={"type": "json_object"})
+    resp = litellm.completion(model=model, messages=messages, timeout=90, response_format={"type": "json_object"})
     latency_ms = int((time.monotonic() - start) * 1000)
     usage = getattr(resp, "usage", None)
     itok = int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -131,9 +141,14 @@ def _call_with_retries(model, messages, trace_info) -> dict:
     last = None
     for attempt in range(MAX_ATTEMPTS_PER_MODEL):
         try:
-            return _call_model(model, messages, **trace_info,
-                               langsmith_extra={"metadata": {**trace_info, "ls_provider": "google",
-                                                             "ls_model_name": model, "attempt": attempt + 1}})
+            return _call_model(
+                model,
+                messages,
+                **trace_info,
+                langsmith_extra={
+                    "metadata": {**trace_info, "ls_provider": "google", "ls_model_name": model, "attempt": attempt + 1}
+                },
+            )
         except Exception as e:  # noqa: BLE001 - any API error: back off and retry
             last = e
             time.sleep(2 ** (attempt + 1))
@@ -141,14 +156,21 @@ def _call_with_retries(model, messages, trace_info) -> dict:
 
 
 # ------------------------------------------------------------------ public API
-def complete_json(task: str, prompt_version: str, system: str, user: str, schema: type[BaseModel],
-                  model: str | None = None, use_cache: bool = True) -> tuple[BaseModel, CallMeta]:
+def complete_json(
+    task: str,
+    prompt_version: str,
+    system: str,
+    user: str,
+    schema: type[BaseModel],
+    model: str | None = None,
+    use_cache: bool = True,
+) -> tuple[BaseModel, CallMeta]:
     """Ask for JSON matching `schema`. Returns (validated object, call metadata)."""
     models = [model] if model else [settings.llm_model, settings.llm_fallback_model]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     trace_info = {"task": task, "prompt_version": prompt_version}
     errors = []
-    if use_cache:   # any model's cached answer wins: never re-call a failing primary for a request already answered
+    if use_cache:  # any model's cached answer wins: never re-call a failing primary for a request already answered
         cached_model = next((m for m in models if _cache_get(_cache_key(m, messages))), None)
         if cached_model:
             models = [cached_model]
@@ -159,20 +181,31 @@ def complete_json(task: str, prompt_version: str, system: str, user: str, schema
         try:
             if hit:
                 raw = hit
-                meta = CallMeta(m, True, 0, raw["usage_metadata"]["input_tokens"],
-                                raw["usage_metadata"]["output_tokens"], 0.0)
+                meta = CallMeta(
+                    m, True, 0, raw["usage_metadata"]["input_tokens"], raw["usage_metadata"]["output_tokens"], 0.0
+                )
             else:
                 raw = _call_with_retries(m, messages, trace_info)
-                meta = CallMeta(m, False, raw["latency_ms"], raw["usage_metadata"]["input_tokens"],
-                                raw["usage_metadata"]["output_tokens"], raw["cost_usd"])
+                meta = CallMeta(
+                    m,
+                    False,
+                    raw["latency_ms"],
+                    raw["usage_metadata"]["input_tokens"],
+                    raw["usage_metadata"]["output_tokens"],
+                    raw["cost_usd"],
+                )
             try:
                 parsed = schema.model_validate(json.loads(raw["content"]))
             except (json.JSONDecodeError, ValidationError) as e:
                 # one repair attempt: show the model its own output and the error
                 repair = messages + [
                     {"role": "assistant", "content": raw["content"]},
-                    {"role": "user", "content": f"That output was invalid: {str(e)[:800]}\n"
-                                                "Return ONLY valid JSON that matches the required format."}]
+                    {
+                        "role": "user",
+                        "content": f"That output was invalid: {str(e)[:800]}\n"
+                        "Return ONLY valid JSON that matches the required format.",
+                    },
+                ]
                 raw = _call_with_retries(m, repair, {**trace_info, "repair": True})
                 parsed = schema.model_validate(json.loads(raw["content"]))
                 meta.repaired = True
@@ -180,7 +213,7 @@ def complete_json(task: str, prompt_version: str, system: str, user: str, schema
                 meta.output_tokens += raw["usage_metadata"]["output_tokens"]
                 meta.latency_ms += raw["latency_ms"]
             if not hit:
-                _cache_put(key, raw)     # only cache answers that validated
+                _cache_put(key, raw)  # only cache answers that validated
             _log(task, prompt_version, meta, True, None, m)
             return parsed, meta
         except Exception as e:  # noqa: BLE001 - try the next model

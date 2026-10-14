@@ -5,6 +5,7 @@ Input:  STOP keywords close the case, emergencies go straight to a nurse, someon
 Output: no invented times, no contact details, no diagnosis, no booking claims without a booking, fits the channel,
         respectful tone (no shouting, no pressure).
 """
+
 import re
 from datetime import datetime, timedelta
 
@@ -13,38 +14,91 @@ from readmit.agents.state import parse_dt
 # Carrier-standard opt-out keywords (the whole message, ignoring case and punctuation)
 STOP_WORDS = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit"}
 
-EMERGENCY = [r"chest pain", r"can'?t breathe", r"cannot breathe", r"trouble breathing", r"short(ness)? of breath",
-             r"passed out", r"faint(ed|ing)", r"slurred speech", r"face (is )?droop", r"stroke",
-             r"suicid", r"kill myself", r"end my life", r"overdos", r"bleeding (a lot|heavily|won'?t stop)",
-             r"dolor de pecho", r"no puedo respirar"]
+EMERGENCY = [
+    r"chest pain",
+    r"can'?t breathe",
+    r"cannot breathe",
+    r"trouble breathing",
+    r"short(ness)? of breath",
+    r"passed out",
+    r"faint(ed|ing)",
+    r"slurred speech",
+    r"face (is )?droop",
+    r"stroke",
+    r"suicid",
+    r"kill myself",
+    r"end my life",
+    r"overdos",
+    r"bleeding (a lot|heavily|won'?t stop)",
+    r"dolor de pecho",
+    r"no puedo respirar",
+]
 
 # Someone other than the patient replying (family member, friend). They get no health details.
-RELATIONS = (r"daughter|son|wife|husband|spouse|partner|mother|father|mom|dad|sister|brother|caregiver|niece|"
-             r"nephew|friend|neighbou?r|grandson|granddaughter")
-PROXY = [rf"\b(this is|i'?m|i am) (his|her|their|the patient'?s|[a-z]+'s) ({RELATIONS})\b",
-         rf"\b(his|her) ({RELATIONS}) here\b", r"\bon (his|her|their) behalf\b",
-         r"\b(he|she) (is|'s) (asleep|sleeping|not available|not here|busy)\b",
-         r"\bsoy su (hija|hijo|esposa|esposo|madre|padre|hermana|hermano|nieta|nieto)\b"]
+RELATIONS = (
+    r"daughter|son|wife|husband|spouse|partner|mother|father|mom|dad|sister|brother|caregiver|niece|"
+    r"nephew|friend|neighbou?r|grandson|granddaughter"
+)
+PROXY = [
+    rf"\b(this is|i'?m|i am) (his|her|their|the patient'?s|[a-z]+'s) ({RELATIONS})\b",
+    rf"\b(his|her) ({RELATIONS}) here\b",
+    r"\bon (his|her|their) behalf\b",
+    r"\b(he|she) (is|'s) (asleep|sleeping|not available|not here|busy)\b",
+    r"\bsoy su (hija|hijo|esposa|esposo|madre|padre|hermana|hermano|nieta|nieto)\b",
+]
 
-INJECTION = [r"ignore (all |any )?(previous|prior|above|your) (instructions|rules)", r"system prompt",
-             r"you are now", r"developer mode", r"disregard (the|your) (rules|instructions)",
-             r"reveal (your|the) (prompt|instructions)", r"act as (an? )?(admin|doctor|system)"]
+INJECTION = [
+    r"ignore (all |any )?(previous|prior|above|your) (instructions|rules)",
+    r"system prompt",
+    r"you are now",
+    r"developer mode",
+    r"disregard (the|your) (rules|instructions)",
+    r"reveal (your|the) (prompt|instructions)",
+    r"act as (an? )?(admin|doctor|system)",
+]
 
 CHANNEL_MAX_CHARS = {"sms": 320, "portal": 1200, "email": 1200, "phone": 900}
 
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 PHONE_RE = re.compile(r"\+?\d[\d\-\s().]{8,}\d")
 PLACEHOLDER_RE = re.compile(r"\[[A-Za-z _]+\]|\{[A-Za-z_]+\}")
-ALLOWED_TOKENS = {"{first_name}"}            # filled in at send time
+ALLOWED_TOKENS = {"{first_name}"}  # filled in at send time
 SHOUTING_RE = re.compile(r"\b[A-Z]{4,}\b")
 SHOUT_OK = {"STOP", "START", "HELP"}
-PRESSURE_RE = re.compile(r"\b(urgent|urgently|immediately|you must|failure to|final notice|last chance|"
-                         r"or else|required to respond|act now)\b", re.IGNORECASE)
+PRESSURE_RE = re.compile(
+    r"\b(urgent|urgently|immediately|you must|failure to|final notice|last chance|"
+    r"or else|required to respond|act now)\b",
+    re.IGNORECASE,
+)
 TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s?m\b\.?", re.IGNORECASE)
 CLOCK_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
-MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
-          "nov": 11, "dec": 12, "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
-          "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12}
+MONTHS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
 DATE_EN_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b", re.IGNORECASE)
 DATE_ES_RE = re.compile(r"\b(\d{1,2}) de (" + "|".join(k for k in MONTHS if len(k) > 3) + r")\b", re.IGNORECASE)
 BOOKED_CLAIM_RE = re.compile(
@@ -79,8 +133,9 @@ def _allowed_times(slots: list[dict]) -> tuple[set, set]:
     return times, dates
 
 
-def check_draft(body: str, channel: str | None, slots: list[dict], appointment: dict | None,
-                private_terms: list[str] | None = None) -> list[str]:
+def check_draft(
+    body: str, channel: str | None, slots: list[dict], appointment: dict | None, private_terms: list[str] | None = None
+) -> list[str]:
     """Problems with a draft, in words the writer can act on. Empty list = passes.
     private_terms: words that must never appear in a message (e.g. the diagnosis): messages can be read by
     anyone holding the phone or inbox."""
@@ -112,7 +167,7 @@ def check_draft(body: str, channel: str | None, slots: list[dict], appointment: 
             problems.append(f"mentions a time ({m.group(0).strip()}) that is not one of the offered slots")
     for m in CLOCK_RE.finditer(body):
         h, mins = int(m.group(1)) % 12, int(m.group(2))
-        if (h, mins) not in times and not TIME_RE.search(body[m.start():m.end() + 6]):
+        if (h, mins) not in times and not TIME_RE.search(body[m.start() : m.end() + 6]):
             problems.append(f"mentions a time ({m.group(0)}) that is not one of the offered slots")
     for m in DATE_EN_RE.finditer(body):
         if (MONTHS[m.group(1).lower()[:3]], int(m.group(2))) not in dates:
@@ -122,12 +177,28 @@ def check_draft(body: str, channel: str | None, slots: list[dict], appointment: 
             problems.append(f"mentions a date ({m.group(0)}) that is not one of the offered slots")
     if not appointment and BOOKED_CLAIM_RE.search(body):
         problems.append("says the visit is booked or confirmed, but nothing was booked")
-    return list(dict.fromkeys(problems))     # dedupe, keep order
+    return list(dict.fromkeys(problems))  # dedupe, keep order
 
 
 # ------------------------------------------------------------------ booking guard
-WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
-            "lun": 0, "mar": 1, "mie": 2, "mié": 2, "jue": 3, "vie": 4, "sáb": 5, "sab": 5, "dom": 6}
+WEEKDAYS = {
+    "mon": 0,
+    "tue": 1,
+    "wed": 2,
+    "thu": 3,
+    "fri": 4,
+    "sat": 5,
+    "sun": 6,
+    "lun": 0,
+    "mar": 1,
+    "mie": 2,
+    "mié": 2,
+    "jue": 3,
+    "vie": 4,
+    "sáb": 5,
+    "sab": 5,
+    "dom": 6,
+}
 
 
 def requested_weekdays(details: dict) -> set[int]:
@@ -171,5 +242,7 @@ def search_window(details: dict, now: str) -> tuple[str | None, str | None]:
     today = parse_dt(now).replace(hour=0, minute=0, second=0, microsecond=0)
     day = next(today + timedelta(days=i) for i in range(7) if (today + timedelta(days=i)).weekday() in days)
     e = _hhmm(details.get("earliest_time")) or (0, 0)
-    return (day.replace(hour=e[0], minute=e[1]).isoformat(timespec="minutes"),
-            (day + timedelta(days=1)).isoformat(timespec="minutes"))
+    return (
+        day.replace(hour=e[0], minute=e[1]).isoformat(timespec="minutes"),
+        (day + timedelta(days=1)).isoformat(timespec="minutes"),
+    )

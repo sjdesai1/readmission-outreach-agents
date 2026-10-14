@@ -1,4 +1,5 @@
 """Model plumbing that must never silently break: feature alignment, metrics, tiers, holdout."""
+
 import numpy as np
 import pandas as pd
 
@@ -8,11 +9,28 @@ from readmit.model.score import in_holdout, tier, top_drivers
 
 
 def stays(n=4, **overrides):
-    base = {"encounter_id": [f"E{i}" for i in range(n)], "age": 70, "adi_decile": 5, "length_of_stay_days": 4,
-            "charlson_index": 3, "prior_admissions_12m": 1, "ed_visits_6m": 0, "prior_30d_readmits_12m": 0,
-            "hemoglobin": 12.0, "sodium": 138.0, "creatinine": 1.0, "albumin": np.nan, "discharge_sbp": 120,
-            "num_discharge_meds": 8, "med_changes_count": 1, "sex": "F", "payer": "Medicare",
-            "admission_type": "Emergency", "primary_dx_group": "Pneumonia", "discharge_disposition": "Home"}
+    base = {
+        "encounter_id": [f"E{i}" for i in range(n)],
+        "age": 70,
+        "adi_decile": 5,
+        "length_of_stay_days": 4,
+        "charlson_index": 3,
+        "prior_admissions_12m": 1,
+        "ed_visits_6m": 0,
+        "prior_30d_readmits_12m": 0,
+        "hemoglobin": 12.0,
+        "sodium": 138.0,
+        "creatinine": 1.0,
+        "albumin": np.nan,
+        "discharge_sbp": 120,
+        "num_discharge_meds": 8,
+        "med_changes_count": 1,
+        "sex": "F",
+        "payer": "Medicare",
+        "admission_type": "Emergency",
+        "primary_dx_group": "Pneumonia",
+        "discharge_disposition": "Home",
+    }
     base |= {c: False for c in features.BOOLEAN}
     base |= overrides
     return pd.DataFrame(base)
@@ -38,7 +56,7 @@ def test_lace_score_example():
 def test_recall_and_precision_at_top_slice():
     y = np.array([1, 0, 0, 1, 0, 0, 0, 0, 0, 1])
     score = np.array([0.9, 0.8, 0.1, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-    assert recall_at(y, score, 0.2) == 1 / 3          # top 2 contains one of three readmissions
+    assert recall_at(y, score, 0.2) == 1 / 3  # top 2 contains one of three readmissions
     assert precision_at(y, score, 0.2) == 0.5
 
 

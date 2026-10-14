@@ -2,6 +2,7 @@
 
 Skipped automatically when Postgres isn't reachable. CI runs them with a Postgres service container.
 """
+
 from datetime import datetime, timedelta
 
 import pytest
@@ -16,14 +17,14 @@ pytestmark = pytest.mark.usefixtures("pg")
 def test_summary_is_minimum_necessary():
     s = store.patient_summary("C1")
     assert s["patient"]["first_name"] == "Maria"
-    assert "maria@example.com" not in str(s)          # agents never see contact details
+    assert "maria@example.com" not in str(s)  # agents never see contact details
     assert s["contact"]["allowed_channels"] == ["email"]
     assert s["risk"]["barriers"] == ["transport_barrier"]
 
 
 def test_find_slots_skips_taken_too_soon_and_disallowed_telehealth():
-    ids = [s["slot_id"] for s in store.find_slots("C2", limit=10)]   # P2 can't do telehealth
-    assert ids == ["S1", "S2"]        # S3 telehealth, S4 under 2h away, S5 taken by someone else
+    ids = [s["slot_id"] for s in store.find_slots("C2", limit=10)]  # P2 can't do telehealth
+    assert ids == ["S1", "S2"]  # S3 telehealth, S4 under 2h away, S5 taken by someone else
 
 
 def test_booking_is_idempotent_and_blocks_double_booking():
@@ -73,13 +74,15 @@ def test_every_action_is_audited():
 def test_no_actions_before_the_case_opens():
     """Reproduces the Inspector bug: clock at Sep 1, case opens Sep 9, booking used to succeed."""
     store.set_now(datetime(2026, 9, 1))
-    for action in (lambda: store.book_appointment("C1", "S1", "early-1"),
-                   lambda: store.send_message("C1", "email", "hi", "early-2"),
-                   lambda: store.create_referral("C1", "transport", "no car", "early-3"),
-                   lambda: store.update_case("C1", "contacted", "early")):
+    for action in (
+        lambda: store.book_appointment("C1", "S1", "early-1"),
+        lambda: store.send_message("C1", "email", "hi", "early-2"),
+        lambda: store.create_referral("C1", "transport", "no car", "early-3"),
+        lambda: store.update_case("C1", "contacted", "early"),
+    ):
         with pytest.raises(StoreError, match="not open yet"):
             action()
-    assert store.get_case("C1")["recent_events"] == []    # reads still work, nothing was written
+    assert store.get_case("C1")["recent_events"] == []  # reads still work, nothing was written
 
 
 NOW = datetime(2026, 9, 9, 9, 0)
@@ -87,11 +90,18 @@ NOW = datetime(2026, 9, 9, 9, 0)
 
 def add_spanish_speaking_doctor():
     with db.transaction() as c:
-        db.rows(c, """insert into outreach.providers (provider_id, name, role, languages)
-                      values ('PRV09', 'Dra. Ruiz', 'primary care', '{English,Spanish}')""")
-        db.rows(c, """insert into outreach.slots (slot_id, provider_id, start_at, end_at, mode, status)
+        db.rows(
+            c,
+            """insert into outreach.providers (provider_id, name, role, languages)
+                      values ('PRV09', 'Dra. Ruiz', 'primary care', '{English,Spanish}')""",
+        )
+        db.rows(
+            c,
+            """insert into outreach.slots (slot_id, provider_id, start_at, end_at, mode, status)
                       values ('S9', 'PRV09', :s, :e, 'in_person', 'open')""",
-                s=NOW + timedelta(days=3), e=NOW + timedelta(days=3, minutes=30))
+            s=NOW + timedelta(days=3),
+            e=NOW + timedelta(days=3, minutes=30),
+        )
 
 
 def test_quiet_hours_hold_messages_until_morning():
@@ -110,10 +120,10 @@ def test_safety_messages_ignore_quiet_hours():
 
 def test_slots_rank_language_then_own_doctor():
     add_spanish_speaking_doctor()
-    assert store.find_slots("C2", limit=3)[0]["slot_id"] == "S9"          # Jose speaks Spanish
+    assert store.find_slots("C2", limit=3)[0]["slot_id"] == "S9"  # Jose speaks Spanish
     with db.transaction() as c:
         db.rows(c, "update outreach.cases set pcp_provider_id = 'PRV09' where case_id = 'C1'")
-    first = store.find_slots("C1", limit=3)[0]                             # Maria: her own doctor first
+    first = store.find_slots("C1", limit=3)[0]  # Maria: her own doctor first
     assert first["slot_id"] == "S9" and first["own_doctor"]
 
 
@@ -127,7 +137,7 @@ def test_follow_up_deadline_beats_everything():
 
 def test_channel_change_needs_the_contact_on_file():
     with pytest.raises(StoreError, match="no sms contact"):
-        store.set_preferred_channel("C1", "sms", "text me instead")        # Maria has no mobile number
+        store.set_preferred_channel("C1", "sms", "text me instead")  # Maria has no mobile number
     assert store.set_preferred_channel("C2", "portal", "use the portal")["preferred_channel"] == "portal"
     assert store.get_case("C2")["recent_events"][-1]["type"] == "consent_changed"
 
@@ -136,7 +146,7 @@ def test_identity_check_never_reveals_the_answer_and_locks():
     for left in (2, 1, 0):
         assert store.verify_identity("C1", 1960) == {"verified": False, "attempts_left": left}
     with pytest.raises(StoreError, match="locked"):
-        store.verify_identity("C1", 1954)                                   # even the right answer, once locked
+        store.verify_identity("C1", 1954)  # even the right answer, once locked
     assert store.verify_identity("C2", 1968) == {"verified": True}
     types = [e["type"] for e in store.get_case("C1")["recent_events"]]
     assert types == ["identity_failed", "identity_failed", "identity_locked"]
