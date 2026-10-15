@@ -27,6 +27,10 @@ each minor version is a finished milestone.
 - Architecture decision records (docs/decisions) and the first postmortem (docs/postmortems)
 
 ### Fixed
+- Reviewer flagged real doctor names as invented (it wasn't given providers or the conversation); review v2
+- Interpreter re-saved preferences from earlier messages as new ones; interpret v4, and code skips unchanged keys
+- Remembered "afternoons" was dropped when the patient named a day; days and time of day now combine
+- Scheduler offered only video when the patient had no preference; schedule_step v2 offers a mix
 - Writer phrasing "an in the clinic visit"
 - Agents booked a time the patient had ruled out ("can't do noon" booked noon)
 - Actions were possible on a case before it opened (booking dated before discharge)
