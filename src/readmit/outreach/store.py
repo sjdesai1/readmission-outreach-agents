@@ -793,7 +793,8 @@ def list_nurse_tasks(status: str = "open") -> list[dict]:
 
 
 def resolve_nurse_task(task_id: str, resolution: str, hand_back: bool = False) -> dict:
-    """A nurse finished the task. hand_back=True returns the case to the AI outreach."""
+    """A nurse finished the task. hand_back=True returns the case to the AI outreach: back to 'booked' if the
+    patient still has an upcoming appointment (so outreach doesn't offer visits again), else 'awaiting_reply'."""
     with db.transaction() as c:
         task = db.one(c, "select * from outreach.nurse_tasks where task_id = :id for update", id=task_id)
         if not task:
@@ -807,15 +808,28 @@ def resolve_nurse_task(task_id: str, resolution: str, hand_back: bool = False) -
             r=resolution,
             id=task_id,
         )
+        back_to = None
         if hand_back:
+            upcoming = db.one(
+                c,
+                """select 1 as x from outreach.appointments
+                   where case_id = :id and status = 'booked' and start_at > :t""",
+                id=task["case_id"],
+                t=t,
+            )
+            back_to = "booked" if upcoming else "awaiting_reply"
             db.rows(
                 c,
-                """update outreach.cases set status = 'awaiting_reply', next_action_at = :t, updated_at = :t
+                """update outreach.cases set status = :s, updated_at = :t,
+                          next_action_at = case when :s = 'booked' then null else :t end
                    where case_id = :id and status = 'escalated'""",
+                s=back_to,
                 t=t,
                 id=task["case_id"],
             )
-        log_event(c, task["case_id"], "nurse_task_resolved", {"task_id": task_id, "hand_back": hand_back})
+        log_event(
+            c, task["case_id"], "nurse_task_resolved", {"task_id": task_id, "hand_back": hand_back, "to": back_to}
+        )
     return _task_view(task)
 
 

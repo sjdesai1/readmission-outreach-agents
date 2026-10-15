@@ -438,7 +438,8 @@ def _why_escalate(state: TurnState) -> str:
         return "scheduling failed: " + state["schedule"]["error"]
     intent = (state.get("intent") or {}).get("intent")
     if intent:
-        return f"patient reply needs a nurse (intent: {intent})"
+        asked = ((state.get("intent") or {}).get("details") or {}).get("question")
+        return f"patient reply needs a nurse ({intent})" + (f": {asked}" if asked else "")
     if state.get("plan") and not state["plan"].get("channel"):
         return "no channel the patient consented to"
     return "unspecified"
