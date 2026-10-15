@@ -5,6 +5,9 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Fixed
+- Flaky "too many clients" test error: the test fixture now closes its database connections after each test
+
 ## [0.3.0] - Milestone 3
 
 ### Added
