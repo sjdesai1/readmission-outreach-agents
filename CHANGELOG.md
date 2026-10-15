@@ -38,6 +38,8 @@ each minor version is a finished milestone.
 - Confirmations couldn't name the doctor; the booked slot's doctor is now passed to the writer and reviewer
 - Nurse hand-back put booked patients back to "awaiting reply"; it now returns them to "booked"
 - Nurse task reason now includes the patient's question, so the queue can be triaged at a glance
+- Safety: a case paused for a nurse skipped every inbound turn, so "chest pain" got no 911 message;
+  paused cases now still run the input guard (emergencies and STOP), and other replies are flagged for the nurse
 - Writer phrasing "an in the clinic visit"
 - Agents booked a time the patient had ruled out ("can't do noon" booked noon)
 - Actions were possible on a case before it opened (booking dated before discharge)

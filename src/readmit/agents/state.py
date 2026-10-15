@@ -27,6 +27,7 @@ class TurnState(TypedDict, total=False):
     history: str  # one-line digest of older messages
     unclear_streak: int  # how many replies in a row we couldn't understand
     skip: str | None  # reason to do nothing this turn
+    paused: bool  # a nurse has the case: only STOP and emergencies are handled
     # decisions
     guard: dict  # input guard result: action + flags
     intent: dict  # reply interpreter: intent, details, accepts
