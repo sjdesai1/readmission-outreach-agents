@@ -6,7 +6,8 @@ from typing import Annotated, Literal, TypedDict
 
 Trigger = Literal["outreach_due", "inbound_reply"]
 MAX_REVISIONS = 1  # a draft gets one rewrite; failing again goes to a nurse
-TIMING_KEYS = ("preferred_days", "part_of_day", "earliest_time", "latest_time")
+DAY_KEYS = ("preferred_days",)
+TIME_KEYS = ("part_of_day", "earliest_time", "latest_time")
 MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 DAYS_ES = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
@@ -66,12 +67,13 @@ def when_es(start_at) -> str:
 
 def request_details(state: TurnState) -> dict:
     """What the patient wants for scheduling: this reply's details on top of their standing preferences.
-    If this reply says anything about timing, it replaces the remembered timing entirely (no mixing
-    "mornings" from memory with "after 2" from today)."""
+    Days and time of day combine ("Monday?" + remembered "afternoons" = Monday afternoon). Within one
+    dimension the reply wins as a whole: "after 2" replaces a remembered "mornings", never mixes with it."""
     memory = dict((state.get("summary") or {}).get("memory") or {})
     details = dict(((state.get("intent") or {}).get("details")) or {})
-    if any(details.get(k) for k in TIMING_KEYS):
-        memory = {k: v for k, v in memory.items() if k not in TIMING_KEYS}
+    for group in (DAY_KEYS, TIME_KEYS):
+        if any(details.get(k) for k in group):
+            memory = {k: v for k, v in memory.items() if k not in group}
     return {**memory, **{k: v for k, v in details.items() if v not in (None, [], "")}}
 
 

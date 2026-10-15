@@ -303,8 +303,8 @@ async def remember(state: TurnState, gw: Gateway) -> dict:
     saved = []
     for key in MEMORY_KEYS:
         value = details.get(key)
-        if value in (None, [], ""):
-            continue
+        if value in (None, [], "") or memory.get(key) == value:
+            continue  # nothing new: don't re-save, and don't tell the patient "we'll remember" again
         try:
             await gw.call(
                 "patient_data",

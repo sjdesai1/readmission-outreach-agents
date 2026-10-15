@@ -76,3 +76,16 @@ def test_booking_guard_respects_what_the_patient_asked():
     assert slot_fits("2026-09-10T15:00:00", ask) == []
     assert slot_fits("2026-09-10T09:00:00", {"part_of_day": "afternoon"})
     assert search_window(ask, "2026-09-10T09:00") == ("2026-09-10T14:00", "2026-09-11T00:00")
+
+
+def test_remembered_preferences_combine_with_a_new_request():
+    from readmit.agents.state import request_details
+
+    def ask(memory, details):
+        return request_details({"summary": {"memory": memory}, "intent": {"details": details}})
+
+    afternoons = {"part_of_day": "afternoon"}
+    assert ask(afternoons, {"preferred_days": ["Monday"]}) == {"part_of_day": "afternoon", "preferred_days": ["Monday"]}
+    assert ask(afternoons, {"earliest_time": "10:00"}) == {"earliest_time": "10:00"}  # same dimension: reply wins
+    assert ask(afternoons, {"mode": "in_person"}) == {"part_of_day": "afternoon", "mode": "in_person"}
+    assert ask({"preferred_days": ["Tuesday"]}, {"preferred_days": ["Friday"]}) == {"preferred_days": ["Friday"]}

@@ -20,14 +20,17 @@ from readmit.agents.state import TurnState, reply_channel, request_details, when
 from readmit.llm import LLMError, complete_json, load_prompt
 
 # interpret_reply v2: accepts only a specific time, exact time bounds. v3: standing preferences.
+#                 v4: details from the new reply only (not repeated from earlier messages).
+# review_message v2: doctor names, own doctor and the conversation are facts; "we'll remember" is expected.
+# schedule_step v2: standing preferences as filters, a mix of video and clinic when the patient has no preference.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
 #               v4: "clinic visit" label, standing preferences, saying what was remembered.
 PROMPTS = {
-    "interpret_reply": "v3",
+    "interpret_reply": "v4",
     "plan_care": "v1",
     "write_message": "v4",
-    "schedule_step": "v1",
-    "review_message": "v1",
+    "schedule_step": "v2",
+    "review_message": "v2",
 }
 MAX_SCHEDULER_STEPS = 5
 MIN_CONFIDENCE = 0.5
@@ -440,8 +443,19 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
         "channel": reply_channel(state),
         "language": state["summary"]["patient"]["preferred_language"],
         "patient_just_said": state.get("inbound"),
+        "conversation": _conversation(state)[-4:],
         "facts": {
-            "offered_slots": [{"when": x["when"], "how": stubs.how(x["mode"])} for x in sched.get("offered") or []],
+            "offered_slots": [
+                {
+                    "when": x["when"],
+                    "how": stubs.how(x["mode"]),
+                    "with": x["provider"],
+                    "own_doctor": bool(x.get("own_doctor")),
+                }
+                for x in sched.get("offered") or []
+            ],
+            "own_doctor": (state["summary"].get("care_team") or {}).get("own_doctor"),
+            "remembered_this_turn": state.get("remembered") or [],
             "appointment": (
                 {"when": sched["appointment"]["when"], "how": stubs.how(sched["appointment"]["mode"])}
                 if sched.get("appointment")

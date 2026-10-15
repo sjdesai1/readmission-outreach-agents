@@ -389,3 +389,29 @@ def test_symptoms_are_never_remembered_as_preferences(fake_llm):
     answers["interpret_reply"] = {"intent": "symptom", "part_of_day": "morning", "standing": True, "confidence": 0.9}
     s = turn("C1", "my ankles feel puffy every morning")
     assert "remember" in s["path"] and not s.get("remembered")
+
+
+def test_a_preference_already_remembered_is_not_saved_or_announced_again(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    answers["schedule_step"] = LLMError("down")
+    store.remember_preference("C1", "part_of_day", "afternoon", "I work mornings")
+    turn("C1")
+    answers["interpret_reply"] = {
+        "intent": "wants_visit",
+        "part_of_day": "afternoon",
+        "mode": "in_person",
+        "standing": True,
+        "confidence": 0.9,
+    }
+    s = turn("C1", "Do you have clinic visits instead? Afternoons, like I said.")
+    assert s["remembered"] == ["mode"]  # only what's new
+
+
+def test_reviewer_sees_doctors_and_the_conversation(fake_llm):
+    answers, prompts = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    turn("C1")
+    review = json.loads(next(p for p in prompts if p["task"] == "review_message")["user"])
+    assert review["facts"]["offered_slots"][0]["with"] == "Dr. Test"
+    assert "conversation" in review and "remembered_this_turn" in review["facts"]
