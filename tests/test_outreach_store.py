@@ -184,3 +184,10 @@ def test_hand_back_returns_a_booked_patient_to_booked():
     t = store.create_nurse_task("C1", "clinical_question", "routine", "med question", "k4")
     store.resolve_nurse_task(t["task_id"], "called back", hand_back=True)
     assert store.get_case("C1")["status"] == "booked"  # outreach must not offer visits again
+
+
+def test_emergencies_are_due_now_and_top_the_queue():
+    symptom = store.create_nurse_task("C1", "symptom", "urgent", "swelling", "k5")
+    emergency = store.create_nurse_task("C2", "emergency", "urgent", "chest pain", "k6")
+    assert emergency["due_at"].startswith("2026-09-09 09:00")  # now, not within the hour
+    assert [t["task_id"] for t in store.list_nurse_tasks()][:2] == [emergency["task_id"], symptom["task_id"]]

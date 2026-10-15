@@ -97,3 +97,33 @@ In the Inspector I booked a visit dated a week before the patient's discharge. T
 
 **Q: Why HTTP instead of stdio?**
 Each server runs in its own container, like separate services owned by separate teams. Streamable HTTP lets any agent process reach them over the network. stdio is still available with --stdio for local debugging.
+
+
+## Milestone 3: Agents
+
+**Q: Is this a multi-agent system with an orchestrator?**
+No orchestrator LLM. A LangGraph workflow with deterministic routing: code controls the flow, LLMs do the judgment. Five agents (interpreter, planner, scheduler, writer, reviewer) are nodes; guards, identity, sending and escalation are rule nodes. Every path is testable and explainable.
+
+**Q: Which parts use an LLM, and why those?**
+Reading free-text replies, planning the approach, choosing slots from messy requests, writing the message, reviewing it. Everything with one right answer stays in code: STOP, emergencies, consent, identity, booking rules, who gets a nurse and how soon.
+
+**Q: How do you stop the scheduler agent doing something wrong?**
+It picks one action per step as validated JSON. Code adds the case id and idempotency keys, so it can't act for another patient or double book. It can only book slots that find_slots returned this turn, and only if they fit what the patient asked for. Max 5 steps, rule-based fallback.
+
+**Q: What does the safety reviewer add over rule checks?**
+Rules catch invented times, contact details, diagnosis words, tone. The reviewer catches what rules can't: hidden medical advice, a draft that ignores the patient, re-asking a question already answered. Its own checklist overrules its verdict; medical advice goes straight to a nurse; anything else gets one rewrite. If it's down, the draft still goes out after the rule checks, flagged.
+
+**Q: How do you handle a patient who needs a human?**
+A nurse task with a due time from real capacity: emergencies now, symptoms within the hour, questions by 5 PM the next business day with room. The patient is told that exact time. The AI pauses on the case until the nurse hands it back, but STOP and emergencies are still handled.
+
+**Q: Tell me about a bug you found in the agents.**
+Paused cases skipped every turn, so "chest pain" while waiting for a nurse got no 911 message. I'd treated paused like closed. I found it by testing the riskiest edge on purpose, predicted it before running, fixed it by sending replies on paused cases through the input guard, and wrote a postmortem.
+
+**Q: How did you debug agent behavior?**
+LangSmith traces per turn. The reviewer was rewriting most drafts; the trace showed why: the writer's phone style forced a closing question, so confirmations asked "does this time still work?" Fixed the writer prompt, not the reviewer.
+
+**Q: How do you keep PHI out of prompts and traces?**
+The name is a {first_name} token until the send node; contacts never leave the server; traces mask contacts; the diagnosis is blocked from messages outside the logged-in portal.
+
+**Q: What does memory remember, and what doesn't it?**
+Only standing preferences from a fixed list (part of day, time bounds, days, visit type), stated by the patient as ongoing. Never symptoms, never one-off requests. Days and time of day combine with each new request.
