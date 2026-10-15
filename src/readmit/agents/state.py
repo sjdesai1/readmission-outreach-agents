@@ -6,6 +6,9 @@ from typing import Annotated, Literal, TypedDict
 
 Trigger = Literal["outreach_due", "inbound_reply"]
 MAX_REVISIONS = 1  # a draft gets one rewrite; failing again goes to a nurse
+TIMING_KEYS = ("preferred_days", "part_of_day", "earliest_time", "latest_time")
+MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+DAYS_ES = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
 
 class TurnState(TypedDict, total=False):
@@ -35,8 +38,10 @@ class TurnState(TypedDict, total=False):
     identity: dict  # phone identity check: asked / verified
     reply_on: str | None  # channel the patient just switched to (overrides the inbound channel)
     channel_change: dict  # result of a requested channel change
+    remembered: list[str]  # standing preferences saved this turn ("I work mornings")
     escalate_reason: str | None
     urgent: bool
+    nurse_task: dict  # the handoff created by escalate (kind, priority, honest due time)
     outcome: dict  # what the turn finally did
     path: Annotated[list[str], operator.add]  # nodes visited, appended by each node (for tests and traces)
 
@@ -49,6 +54,25 @@ def when(start_at) -> str:
     """One display format for every slot time, e.g. 'Thu Sep 10, 9:00 AM'. Output checks rely on it."""
     dt = start_at if isinstance(start_at, datetime) else parse_dt(start_at)
     return f"{dt:%a %b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
+
+
+def when_es(start_at) -> str:
+    """Spanish display format, e.g. 'jue 10 sep, 9:00 AM' (used only in fixed Spanish templates)."""
+    dt = start_at if isinstance(start_at, datetime) else parse_dt(start_at)
+    return f"{DAYS_ES[dt.weekday()]} {dt.day} {MONTHS_ES[dt.month - 1]}, {dt.hour % 12 or 12}:{dt:%M} " + (
+        "AM" if dt.hour < 12 else "PM"
+    )
+
+
+def request_details(state: TurnState) -> dict:
+    """What the patient wants for scheduling: this reply's details on top of their standing preferences.
+    If this reply says anything about timing, it replaces the remembered timing entirely (no mixing
+    "mornings" from memory with "after 2" from today)."""
+    memory = dict((state.get("summary") or {}).get("memory") or {})
+    details = dict(((state.get("intent") or {}).get("details")) or {})
+    if any(details.get(k) for k in TIMING_KEYS):
+        memory = {k: v for k, v in memory.items() if k not in TIMING_KEYS}
+    return {**memory, **{k: v for k, v in details.items() if v not in (None, [], "")}}
 
 
 def reply_channel(state: TurnState) -> str | None:

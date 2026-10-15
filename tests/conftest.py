@@ -94,3 +94,19 @@ def pg(monkeypatch):
     store.set_now(NOW)
     yield
     db.engine.cache_clear()
+
+
+@pytest.fixture
+def add_slot(pg):
+    """Add one more open slot, for a test that needs a specific time (the fixture's are all 9 AM)."""
+
+    def add(sid, start, mode="in_person"):
+        with db.transaction() as c:
+            db.rows(
+                c,
+                """insert into outreach.slots (slot_id, provider_id, start_at, end_at, mode, status)
+                          values (:slot_id, :provider_id, :start_at, :end_at, :mode, :status)""",
+                **slot(sid, start, mode),
+            )
+
+    return add

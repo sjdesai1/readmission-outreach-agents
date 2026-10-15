@@ -64,6 +64,22 @@ def set_preferred_channel(
     return call(store.set_preferred_channel, case_id, channel, reason)
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+def create_nurse_task(
+    case_id: CaseId,
+    kind: Annotated[
+        Literal["emergency", "symptom", "clinical_question", "callback", "review"], Field(description="Why a nurse")
+    ],
+    priority: Annotated[Literal["urgent", "routine"], Field(description="urgent: within the hour")],
+    reason: Annotated[str, Field(min_length=3, description="One sentence for the nurse")],
+    idempotency_key: Annotated[str, Field(description="Unique per handoff; a retry is not duplicated")],
+    summary: Annotated[str | None, Field(description="Short context for the nurse")] = None,
+) -> dict:
+    """Hand the case to a nurse. Returns the task with an honest due time (urgent within the hour, routine by
+    5 PM on the next business day with capacity). The AI pauses on this case until a nurse hands it back."""
+    return call(store.create_nurse_task, case_id, kind, priority, reason, idempotency_key, summary)
+
+
 @mcp.tool(annotations={"readOnlyHint": False})
 def add_case_note(case_id: CaseId, note: Annotated[str, Field(min_length=3)]) -> dict:
     """Add a free-text note to the case history, e.g. what the patient said or why a decision was made."""

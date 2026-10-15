@@ -3,6 +3,7 @@
     python -m readmit.agents.run C000856 --at 2026-09-10T09:00                 # outreach due
     python -m readmit.agents.run C000856 --reply "yes please" --channel sms    # patient replied
     python -m readmit.agents.run C000856 --stub ...                            # rule-based agents, no LLM
+    python -m readmit.agents.run --nurse-queue                                 # open nurse tasks
 
 --at moves the simulation clock first. --reply records the patient's message (as the simulator would), then
 runs an inbound turn. Prints the path through the graph, the message, and what the turn did.
@@ -21,12 +22,19 @@ from readmit.outreach import store
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("case_id")
+    ap.add_argument("case_id", nargs="?")
+    ap.add_argument("--nurse-queue", action="store_true", help="print the open nurse tasks and exit")
     ap.add_argument("--at", help="set the simulation clock first, ISO datetime")
     ap.add_argument("--reply", help="patient's reply text (runs an inbound turn)")
     ap.add_argument("--channel", default="sms", help="channel of the reply")
     ap.add_argument("--stub", action="store_true", help="rule-based stub agents instead of the LLM agents")
     args = ap.parse_args()
+    if args.nurse_queue:
+        for t in store.list_nurse_tasks():
+            print(f"  {t['priority']:<8}{t['due_at'][:16]}  {t['case_id']}  {t['kind']:<18}{t['reason'][:70]}")
+        return
+    if not args.case_id:
+        ap.error("case_id is required")
 
     if args.at:
         store.set_now(datetime.fromisoformat(args.at))
@@ -50,12 +58,23 @@ def main() -> None:
         print(f"  skipped  {s['skip']}")
     if s.get("intent"):
         print(f"  intent   {s['intent']}")
+    if s.get("remembered"):
+        print(f"  memory   saved {s['remembered']}")
     if s.get("plan"):
         print(f"  plan     {json.dumps(s['plan'], default=str)}")
+    for i, step in enumerate((s.get("schedule") or {}).get("agent_steps") or [], 1):
+        result = json.dumps(step.get("result"), default=str)
+        print(
+            f"  step {i}   {step['action']} {step.get('tool') or ''} {json.dumps(step.get('args'))} -> {result[:160]}"
+        )
     if s.get("draft"):
         print(f"  message  {s['draft']['body']}")
     if s.get("problems"):
         print(f"  problems {s['problems']}")
+    if s.get("review"):
+        print(f"  review   {json.dumps(s['review'], default=str)}")
+    if s.get("nurse_task"):
+        print(f"  nurse    {json.dumps(s['nurse_task'], default=str)}")
     print(f"  outcome  {json.dumps(s.get('outcome'), default=str)}")
 
 

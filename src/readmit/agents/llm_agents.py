@@ -1,4 +1,4 @@
-"""The real LLM agents: reply interpreter, care planner, message writer.
+"""The real LLM agents: reply interpreter, care planner, scheduler, message writer, safety reviewer.
 
 Each one: a versioned prompt file, a Pydantic output schema, one call through the shared LLM client
 (fallback, retries, cache, validation + repair, LangSmith trace, cost log). The LLM decides; code checks
@@ -16,12 +16,19 @@ from pydantic import BaseModel, Field
 from readmit.agents import stubs
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import slot_fits
-from readmit.agents.state import TurnState, reply_channel, when
+from readmit.agents.state import TurnState, reply_channel, request_details, when
 from readmit.llm import LLMError, complete_json, load_prompt
 
-# interpret_reply v2: accepts only a specific time, exact time bounds.
+# interpret_reply v2: accepts only a specific time, exact time bounds. v3: standing preferences.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
-PROMPTS = {"interpret_reply": "v2", "plan_care": "v1", "write_message": "v3", "schedule_step": "v1"}
+#               v4: "clinic visit" label, standing preferences, saying what was remembered.
+PROMPTS = {
+    "interpret_reply": "v3",
+    "plan_care": "v1",
+    "write_message": "v4",
+    "schedule_step": "v1",
+    "review_message": "v1",
+}
 MAX_SCHEDULER_STEPS = 5
 MIN_CONFIDENCE = 0.5
 
@@ -56,6 +63,7 @@ class ReplyReading(BaseModel):
     new_channel: Channel | None = None
     question: str | None = None
     barrier: str | None = None
+    standing: bool = False  # the timing/mode preference is ongoing ("I work mornings"), not just this once
     confidence: float = Field(ge=0, le=1)
     reason: str = ""
 
@@ -119,6 +127,7 @@ def _patient_view(state: TurnState) -> dict:
         "contact": s["contact"],
         "stay": s["stay"],
         "risk": s["risk"],
+        "standing_preferences": s.get("memory") or {},
     }
 
 
@@ -140,11 +149,12 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
             "escalate_reason": f"could not read the reply (LLM unavailable): {str(e)[:150]}",
         }
     intent = r.intent if r.confidence >= MIN_CONFIDENCE else "unclear"
-    details = r.model_dump(exclude={"intent", "accepts_offer", "confidence", "reason"}, exclude_none=True)
+    details = r.model_dump(exclude={"intent", "accepts_offer", "confidence", "reason", "standing"}, exclude_none=True)
     return {
         "intent": {
             "intent": intent,
             "accepts": r.accepts_offer and intent in ("wants_visit", "reschedule"),
+            "standing": r.standing and intent not in ("symptom", "abusive", "third_party", "unclear"),
             "details": details,
             "confidence": r.confidence,
             "reason": r.reason,
@@ -224,7 +234,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
             {
                 "option": i,
                 "when": x["when"],
-                "how": "video visit" if x["mode"] == "telehealth" else "in the clinic",
+                "how": stubs.how(x["mode"]),
                 "with": x["provider"],
                 "own_doctor": bool(x.get("own_doctor")),
             }
@@ -233,7 +243,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         "appointment": (
             {
                 "when": sched["appointment"]["when"],
-                "how": "video visit" if sched["appointment"]["mode"] == "telehealth" else "in the clinic",
+                "how": stubs.how(sched["appointment"]["mode"]),
                 "video_link_sent_separately": bool(sched["appointment"].get("video_link")),
             }
             if sched.get("appointment")
@@ -243,6 +253,8 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         "scheduling_note": sched.get("note"),
         "approach": plan.get("approach"),
         "what_patient_said": (state.get("intent") or {}).get("details"),
+        "standing_preferences": s.get("memory") or {},
+        "remembered_this_turn": state.get("remembered") or [],
         "conversation": _conversation(state),
         "checker_feedback": (state.get("problems") or []) + ((state.get("review") or {}).get("reasons") or []),
     }
@@ -296,7 +308,7 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
     if state.get("trigger") != "inbound_reply":
         return await stubs.scheduler(state, gw)  # cheapest path that does the job
     intent = state.get("intent") or {}
-    details = intent.get("details") or {}
+    details = request_details(state)  # this reply on top of standing preferences
     cid = state["case_id"]
     try:
         tools = await gw.list_tools("scheduling")
@@ -308,6 +320,7 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
     base = {
         "now": state["now"],
         "patient_request": {"intent": intent.get("intent"), "accepts": intent.get("accepts"), **details},
+        "standing_preferences": state["summary"].get("memory") or {},
         "conversation": _conversation(state)[-4:],
         "current_appointment_id": appointment_id,
         "follow_up_by": (state["summary"].get("care_team") or {}).get("follow_up_by"),
@@ -402,9 +415,61 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
     return fallback
 
 
+# ------------------------------------------------------------------ safety reviewer (no tools)
+class ReviewChecks(BaseModel):
+    answers_the_patient: bool = True
+    no_medical_advice: bool = True
+    no_private_details: bool = True
+    respectful_tone: bool = True
+    clear_next_step: bool = True
+    matches_the_facts: bool = True
+
+
+class Review(BaseModel):
+    verdict: Literal["approve", "revise", "escalate"]
+    reasons: list[str] = Field(default_factory=list, max_length=5)
+    checks: ReviewChecks = Field(default_factory=ReviewChecks)
+
+
+async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
+    """A second model reads the draft as the patient would. The deterministic checks already passed;
+    this catches what rules can't: medical advice in disguise, a cold tone, a reply that ignores the patient."""
+    sched = state.get("schedule") or {}
+    user = {
+        "purpose": message_purpose(state),
+        "channel": reply_channel(state),
+        "language": state["summary"]["patient"]["preferred_language"],
+        "patient_just_said": state.get("inbound"),
+        "facts": {
+            "offered_slots": [{"when": x["when"], "how": stubs.how(x["mode"])} for x in sched.get("offered") or []],
+            "appointment": (
+                {"when": sched["appointment"]["when"], "how": stubs.how(sched["appointment"]["mode"])}
+                if sched.get("appointment")
+                else None
+            ),
+            "channel_change": state.get("channel_change"),
+        },
+        "draft": state["draft"],
+    }
+    try:
+        r, _ = await _ask("review_message", user, Review)
+    except LLMError as e:
+        # graceful degradation: the deterministic checks passed, so send, and flag it for the dashboard
+        return {"review": {"verdict": "approve", "reasons": [], "unavailable": True, "error": str(e)[:150]}}
+    failed = [k for k, ok in r.checks.model_dump().items() if not ok]
+    verdict = r.verdict
+    if verdict == "approve" and failed:  # the model's own checks disagree with its verdict: trust the checks
+        verdict = "revise"
+    reasons = r.reasons or [f"failed check: {k}" for k in failed]
+    if not r.checks.no_medical_advice:  # medical advice is never rewritten into shape: a nurse takes over
+        verdict = "escalate"
+    return {"review": {"verdict": verdict, "reasons": reasons, "failed_checks": failed}}
+
+
 LLM_AGENTS = {
     "reply_interpreter": reply_interpreter,
     "care_planner": care_planner,
     "message_writer": message_writer,
     "scheduler": scheduler,
+    "safety_reviewer": safety_reviewer,
 }

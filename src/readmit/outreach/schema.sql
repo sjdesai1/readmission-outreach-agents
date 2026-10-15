@@ -103,3 +103,31 @@ alter table outreach.cases add column if not exists follow_up_by timestamp;     
 alter table outreach.messages add column if not exists deliver_at timestamp;     -- held for quiet hours
 alter table outreach.cases add column if not exists identity_verified_at timestamp;  -- confirmed by year of birth
 alter table outreach.cases add column if not exists identity_failures int not null default 0;
+
+-- Milestone 3 step 5: nurse handoff and patient memory.
+create table if not exists outreach.nurse_tasks (
+    task_id         text primary key,
+    idempotency_key text unique,
+    case_id         text not null,
+    patient_id      text not null,
+    kind            text not null check (kind in ('emergency', 'symptom', 'clinical_question', 'callback', 'review')),
+    priority        text not null check (priority in ('urgent', 'routine')),
+    reason          text not null,
+    summary         text,
+    status          text not null default 'open' check (status in ('open', 'done')),
+    due_at          timestamp not null,
+    created_at      timestamp not null,
+    resolved_at     timestamp,
+    resolution      text
+);
+create index if not exists nurse_tasks_open_idx on outreach.nurse_tasks (status, priority, due_at);
+
+-- Standing preferences a patient stated ("I work mornings"); patient-level, so they carry over to later stays.
+create table if not exists outreach.patient_memory (
+    patient_id text not null,
+    key        text not null,
+    value      text not null,
+    source     text,
+    updated_at timestamp not null,
+    primary key (patient_id, key)
+);

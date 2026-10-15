@@ -30,7 +30,7 @@ def tool_names(server):
 
 
 def test_each_server_exposes_only_its_own_tools():
-    assert tool_names(patient_data) == ["get_patient_summary", "verify_identity"]
+    assert tool_names(patient_data) == ["get_patient_summary", "remember_preference", "verify_identity"]
     assert tool_names(scheduling) == [
         "book_appointment",
         "cancel_appointment",
@@ -40,7 +40,13 @@ def test_each_server_exposes_only_its_own_tools():
     ]
     assert tool_names(messaging) == ["get_thread", "send_message"]
     assert tool_names(referrals) == ["create_referral"]
-    assert tool_names(cases) == ["add_case_note", "get_case", "set_preferred_channel", "update_case_status"]
+    assert tool_names(cases) == [
+        "add_case_note",
+        "create_nurse_task",
+        "get_case",
+        "set_preferred_channel",
+        "update_case_status",
+    ]
 
 
 def test_summary_through_mcp():

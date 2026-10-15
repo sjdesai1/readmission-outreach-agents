@@ -11,3 +11,4 @@ a changed decision gets a new record that supersedes the old one.
 | [0004](0004-llm-never-sees-names.md) | The LLM never sees the patient's name or contact details | Accepted |
 | [0005](0005-versioned-prompts.md) | Prompts are versioned files, never edited in place | Accepted |
 | [0006](0006-scheduler-agent-loop.md) | Scheduler agent: structured action loop over MCP, guarded by code | Accepted |
+| [0007](0007-nurse-handoff.md) | Nurse handoff: honest callback times, and the AI steps back | Accepted |

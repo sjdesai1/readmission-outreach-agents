@@ -8,7 +8,7 @@ import re
 
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import search_window, slot_fits
-from readmit.agents.state import TurnState, when
+from readmit.agents.state import TurnState, request_details, when
 
 
 async def care_planner(state: TurnState, gw: Gateway) -> dict:
@@ -40,7 +40,7 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
 
 async def scheduler(state: TurnState, gw: Gateway) -> dict:
     case_id, intent = state["case_id"], state.get("intent") or {}
-    details = intent.get("details") or {}
+    details = request_details(state)  # this reply on top of standing preferences
     note = None
     try:
         earliest, latest = search_window(details, state["now"])
@@ -86,17 +86,20 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
     return {"schedule": {"offered": offered, "appointment": appointment, "error": None, "note": note}}
 
 
+def how(mode: str) -> str:
+    """One label per visit type, used by every writer: the patient must know whether to travel."""
+    return "video visit" if mode == "telehealth" else "clinic visit"
+
+
 async def message_writer(state: TurnState, gw: Gateway) -> dict:
     name = state["summary"]["patient"]["first_name"]
     sched = state.get("schedule") or {}
     intent = (state.get("intent") or {}).get("intent")
     if sched.get("appointment"):
         a = sched["appointment"]
-        body = f"Hi {name}, your follow-up visit is booked for {a['when']} ({a['mode'].replace('_', '-')})."
+        body = f"Hi {name}, your follow-up visit is booked for {a['when']} ({how(a['mode'])})."
     elif sched.get("offered"):
-        options = "; ".join(
-            f"{i}) {s['when']} ({s['mode'].replace('_', '-')})" for i, s in enumerate(sched["offered"], 1)
-        )
+        options = "; ".join(f"{i}) {s['when']} ({how(s['mode'])})" for i, s in enumerate(sched["offered"], 1))
         body = (
             f"Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
             f"after your hospital stay. Open times: {options}. Reply with the number that works for you."
