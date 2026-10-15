@@ -724,7 +724,9 @@ def create_nurse_task(
             return {**_task_view(existing), "note": "already created by an earlier identical request"}
         case = _case(c, case_id, lock=True, acting=True)
         t = now(c)
-        if priority == "urgent":
+        if kind == "emergency":
+            due = t  # now: the patient was already told to call 911
+        elif priority == "urgent":
             due = t + URGENT_WITHIN
         else:
             day = _next_business_day(t.date())
@@ -781,12 +783,12 @@ def _task_view(t: dict) -> dict:
 
 
 def list_nurse_tasks(status: str = "open") -> list[dict]:
-    """The nurse queue, urgent first, then by due time (used by the nurse queue screen, not by agents)."""
+    """The nurse queue: emergencies, then urgent, then by due time (for the nurse queue screen, not agents)."""
     with db.transaction() as c:
         rows = db.rows(
             c,
             """select * from outreach.nurse_tasks where status = :s
-               order by (priority = 'urgent') desc, due_at""",
+               order by (kind = 'emergency') desc, (priority = 'urgent') desc, due_at""",
             s=status,
         )
     return [_task_view(r) for r in rows]

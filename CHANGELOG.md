@@ -5,8 +5,10 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+## [0.3.0] - Milestone 3
+
 ### Added
-- Milestone 3 (in progress): LangGraph turn graph with rule nodes and an MCP gateway with per-role tool access
+- Milestone 3: LangGraph turn graph with rule nodes and an MCP gateway with per-role tool access
 - Reply interpreter, care planner and message writer agents with versioned prompts and Pydantic schemas
 - Scheduler agent: tool-calling loop over the scheduling MCP server with runtime tool discovery; code injects
   case and idempotency keys and blocks invented or ruled-out slots; rule-based fallback
@@ -24,7 +26,8 @@ each minor version is a finished milestone.
   dependency audit in CI, Dependabot
 
 ### Docs
-- Architecture decision records (docs/decisions) and the first postmortem (docs/postmortems)
+- Architecture decision records (docs/decisions) and postmortems (docs/postmortems)
+- Milestone 3 doc (docs/04_m3_agents.md) and interview Q&A
 
 ### Fixed
 - Reviewer flagged real doctor names as invented (it wasn't given providers or the conversation); review v2
@@ -38,6 +41,7 @@ each minor version is a finished milestone.
 - Confirmations couldn't name the doctor; the booked slot's doctor is now passed to the writer and reviewer
 - Nurse hand-back put booked patients back to "awaiting reply"; it now returns them to "booked"
 - Nurse task reason now includes the patient's question, so the queue can be triaged at a glance
+- Emergency nurse tasks are due immediately and listed first in the queue
 - Safety: a case paused for a nurse skipped every inbound turn, so "chest pain" got no 911 message;
   paused cases now still run the input guard (emergencies and STOP), and other replies are flagged for the nurse
 - Writer phrasing "an in the clinic visit"
