@@ -23,6 +23,7 @@ from readmit.llm import LLMError, complete_json, load_prompt
 #                 v4: details from the new reply only (not repeated from earlier messages).
 #                 v5: asking what visits or times exist is wants_visit, not question.
 # write_message v5: never says visits or times are available unless offered slots are given.
+#               v6: a booking confirmation never asks the patient to confirm again; names the doctor.
 # review_message v2: doctor names, own doctor and the conversation are facts; "we'll remember" is expected.
 # schedule_step v2: standing preferences as filters, a mix of video and clinic when the patient has no preference.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
@@ -30,7 +31,7 @@ from readmit.llm import LLMError, complete_json, load_prompt
 PROMPTS = {
     "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v5",
+    "write_message": "v6",
     "schedule_step": "v2",
     "review_message": "v2",
 }
@@ -249,6 +250,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
             {
                 "when": sched["appointment"]["when"],
                 "how": stubs.how(sched["appointment"]["mode"]),
+                "with": sched["appointment"].get("provider"),
                 "video_link_sent_separately": bool(sched["appointment"].get("video_link")),
             }
             if sched.get("appointment")
@@ -397,7 +399,7 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
                 seen[s["slot_id"]] = s
             step["result"] = [_slot_view(s) for s in result or []]
         elif a.tool in ("book_appointment", "reschedule_appointment"):
-            appt = {**result, "when": when(result["start_at"])}
+            appt = {**result, "when": when(result["start_at"]), "provider": seen[slot_id]["provider"]}
             history.append({**step, "result": appt})
             return {"schedule": {"offered": [], "appointment": appt, "error": None, "agent_steps": history}}
         else:
@@ -459,7 +461,11 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
             "own_doctor": (state["summary"].get("care_team") or {}).get("own_doctor"),
             "remembered_this_turn": state.get("remembered") or [],
             "appointment": (
-                {"when": sched["appointment"]["when"], "how": stubs.how(sched["appointment"]["mode"])}
+                {
+                    "when": sched["appointment"]["when"],
+                    "how": stubs.how(sched["appointment"]["mode"]),
+                    "with": sched["appointment"].get("provider"),
+                }
                 if sched.get("appointment")
                 else None
             ),

@@ -34,6 +34,8 @@ each minor version is a finished milestone.
 - "Do you have clinic visits?" was read as a question: the writer promised visits with no slots behind it;
   interpret v5, writer v5, and code routes questions with scheduling details to the scheduler
 - Reviewer escalated fixable drafts straight to a nurse; only medical advice skips the rewrite now
+- Booking confirmations asked "does this time still work?" (phone style forced a closing question); writer v6
+- Confirmations couldn't name the doctor; the booked slot's doctor is now passed to the writer and reviewer
 - Writer phrasing "an in the clinic visit"
 - Agents booked a time the patient had ruled out ("can't do noon" booked noon)
 - Actions were possible on a case before it opened (booking dated before discharge)
