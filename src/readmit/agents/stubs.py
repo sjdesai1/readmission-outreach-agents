@@ -25,9 +25,21 @@ async def care_planner(state: TurnState, gw: Gateway) -> dict:
     }
 
 
+STUB_INTENTS = [  # keyword rules, first match wins: enough for free simulation runs, not for production
+    ("symptom", r"\b(swollen|swelling|hinchad\w*|dizzy|mareado|fever|fiebre|short of breath)\b"),
+    ("clinical_question", r"\b(can i take|medication|medicine|pills|dose|pastillas|medicina)\b"),
+    ("barrier", r"\b(ride|transport\w*|no car|can'?t get there)\b"),
+    ("wants_human", r"\b(nurse|real person|call me|enfermera)\b"),
+    ("abusive", r"\b(useless|idiots?|stupid)\b"),
+]
+
+
 async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
     t = (state.get("inbound") or "").lower()
-    if re.search(r"\b(yes|book|sure|ok|okay|first|works)\b", t):
+    for name, pattern in STUB_INTENTS:
+        if re.search(pattern, t):
+            return {"intent": {"intent": name, "accepts": False, "details": {}}}
+    if re.search(r"\b(yes|book|sure|ok|okay|first|works|sí|si|primera|primero)\b", t):
         intent = {"intent": "wants_visit", "accepts": True, "details": {}}
     elif re.search(r"\b(no thanks|not interested|don'?t need)\b", t):
         intent = {"intent": "decline", "accepts": False, "details": {}}
@@ -111,6 +123,11 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
             f"Thanks {name}, we'll use this channel from now on."
             if ok
             else f"Thanks {name}. We can't switch to that channel yet; a nurse will help update your contact details."
+        )
+    elif intent == "barrier":
+        body = (
+            f"Thanks for telling us, {name}. We can help: a video visit from home is an option, and our team can "
+            "arrange a ride. Would you like us to find a time?"
         )
     elif intent == "decline":
         body = f"Thanks for letting us know, {name}. If you change your mind, just reply to this message."
