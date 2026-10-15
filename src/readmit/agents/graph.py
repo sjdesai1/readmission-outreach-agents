@@ -30,6 +30,7 @@ from readmit.agents.guards import check_draft, screen_inbound
 from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize_summary, render
 from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel, when, when_es
 from readmit.agents.stubs import STUBS
+from readmit.outreach import cadence
 
 CLOSED = {"suppressed", "completed", "opted_out", "readmitted", "closed"}
 PAUSED = {"escalated"}  # a nurse has the case: the AI stays quiet, but STOP and emergencies are still handled
@@ -95,6 +96,9 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
         {**m, "body": pseudonymize(m["body"], name)}
         for m in await gw.call("messaging", "get_thread", case_id=cid, limit=50) or []
     ]
+    step = None
+    if state["trigger"] == "outreach_due":
+        step = cadence.next_attempt(cadence.unanswered(thread), summary["contact"]["allowed_channels"])
     older, recent = thread[:-RECENT], thread[-RECENT:]
     history = ""
     if older:
@@ -125,6 +129,7 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
         "revisions": 0,
         "inbound": pseudonymize(state.get("inbound"), name),
         "paused": case["status"] in PAUSED,
+        "cadence": step,
     }
 
 
@@ -295,6 +300,14 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
     }
 
 
+async def close_unreachable(state: TurnState, gw: Gateway) -> dict:
+    """The cadence ran out with no reply: close the case. A nurse can reopen it."""
+    reason = state["cadence"]["reason"]
+    await gw.call("cases", "add_case_note", case_id=state["case_id"], note=f"closed: {reason}")
+    await gw.call("cases", "update_case_status", case_id=state["case_id"], status="closed", reason=reason)
+    return {"outcome": {"action": "closed_unreachable", "reason": reason}}
+
+
 async def hold_for_nurse(state: TurnState, gw: Gateway) -> dict:
     """A nurse has this case. The AI doesn't reply; the message is flagged on the case for the nurse."""
     await gw.call(
@@ -460,6 +473,8 @@ def _why_escalate(state: TurnState) -> str:
 def after_context(state: TurnState) -> str:
     if state.get("skip"):
         return END
+    if (state.get("cadence") or {}).get("close"):
+        return "close_unreachable"
     return "input_guard" if state["trigger"] == "inbound_reply" else "care_planner"
 
 
@@ -559,6 +574,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         "identity_check": identity_check,
         "remember": remember,
         "hold_for_nurse": hold_for_nurse,
+        "close_unreachable": close_unreachable,
     }
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
@@ -574,7 +590,8 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     for name, fn in {**rules, **agents}.items():
         g.add_node(name, node(name, fn))
     g.add_edge(START, "load_context")
-    g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", END])
+    g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", "close_unreachable", END])
+    g.add_edge("close_unreachable", END)
     g.add_conditional_edges(
         "input_guard",
         after_guard,

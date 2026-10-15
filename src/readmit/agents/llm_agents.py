@@ -24,6 +24,7 @@ from readmit.llm import LLMError, complete_json, load_prompt
 #                 v5: asking what visits or times exist is wants_visit, not question.
 # write_message v5: never says visits or times are available unless offered slots are given.
 #               v6: a booking confirmation never asks the patient to confirm again; names the doctor.
+#               v7: follow-up attempts say so briefly; the last attempt is a phone call.
 # review_message v2: doctor names, own doctor and the conversation are facts; "we'll remember" is expected.
 # schedule_step v2: standing preferences as filters, a mix of video and clinic when the patient has no preference.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
@@ -31,7 +32,7 @@ from readmit.llm import LLMError, complete_json, load_prompt
 PROMPTS = {
     "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v6",
+    "write_message": "v7",
     "schedule_step": "v2",
     "review_message": "v2",
 }
@@ -232,6 +233,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
     user = {
         "purpose": message_purpose(state),
         "first_message": not any(m["direction"] == "outbound" for m in state.get("thread") or []),
+        "follow_up_attempt": (state.get("cadence") or {}).get("attempt"),
         "channel_change": state.get("channel_change"),
         "channel": reply_channel(state),
         "language": s["patient"]["preferred_language"],

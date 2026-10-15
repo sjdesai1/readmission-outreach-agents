@@ -28,6 +28,7 @@ class TurnState(TypedDict, total=False):
     unclear_streak: int  # how many replies in a row we couldn't understand
     skip: str | None  # reason to do nothing this turn
     paused: bool  # a nurse has the case: only STOP and emergencies are handled
+    cadence: dict | None  # outreach turns: attempt number and channel override, or close
     # decisions
     guard: dict  # input guard result: action + flags
     intent: dict  # reply interpreter: intent, details, accepts
@@ -79,9 +80,12 @@ def request_details(state: TurnState) -> dict:
 
 
 def reply_channel(state: TurnState) -> str | None:
-    """Answer on the channel the patient asked for, else the one they used, else the planner's choice."""
+    """Answer on the channel the patient asked for, else the one they used, else the cadence's channel
+    (the phone call on the last attempt), else the planner's choice."""
     if state.get("reply_on"):
         return state["reply_on"]
     if state.get("trigger") == "inbound_reply" and state.get("inbound_channel"):
         return state["inbound_channel"]
+    if (state.get("cadence") or {}).get("channel"):
+        return state["cadence"]["channel"]
     return (state.get("plan") or {}).get("channel")
