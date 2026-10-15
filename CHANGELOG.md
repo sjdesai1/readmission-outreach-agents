@@ -36,6 +36,8 @@ each minor version is a finished milestone.
 - Reviewer escalated fixable drafts straight to a nurse; only medical advice skips the rewrite now
 - Booking confirmations asked "does this time still work?" (phone style forced a closing question); writer v6
 - Confirmations couldn't name the doctor; the booked slot's doctor is now passed to the writer and reviewer
+- Nurse hand-back put booked patients back to "awaiting reply"; it now returns them to "booked"
+- Nurse task reason now includes the patient's question, so the queue can be triaged at a glance
 - Writer phrasing "an in the clinic visit"
 - Agents booked a time the patient had ruled out ("can't do noon" booked noon)
 - Actions were possible on a case before it opened (booking dated before discharge)

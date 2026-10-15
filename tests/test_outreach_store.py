@@ -177,3 +177,10 @@ def test_memory_takes_known_keys_only_and_the_latest_wins():
     store.remember_preference("C1", "part_of_day", "morning", "mornings are best")
     store.remember_preference("C1", "part_of_day", "afternoon", "actually I work mornings now")
     assert store.patient_summary("C1")["memory"] == {"part_of_day": "afternoon"}
+
+
+def test_hand_back_returns_a_booked_patient_to_booked():
+    store.book_appointment("C1", "S1", "kb")
+    t = store.create_nurse_task("C1", "clinical_question", "routine", "med question", "k4")
+    store.resolve_nurse_task(t["task_id"], "called back", hand_back=True)
+    assert store.get_case("C1")["status"] == "booked"  # outreach must not offer visits again
