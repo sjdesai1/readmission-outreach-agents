@@ -225,6 +225,8 @@ def test_scheduler_agent_books_the_option_the_patient_picked(fake_llm):
     }
     s = turn("C1", "the second one please")
     assert s["schedule"]["appointment"]["start_at"].startswith("2026-09-11")  # S2, not the first slot
+    writer = json.loads(next(p for p in prompts if p["task"] == "write_message")["user"])
+    assert writer["appointment"]["with"] == "Dr. Test"  # the confirmation can name the doctor
     tools = json.loads(next(p for p in prompts if p["task"] == "schedule_step")["user"])["tools"]
     assert all("case_id" not in t["parameters"]["properties"] for t in tools)  # the model can't pick the patient
 

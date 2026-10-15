@@ -81,6 +81,7 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
                 idempotency_key=f"{state['turn_key']}:book",
             )
             appointment["when"] = when(appointment["start_at"])
+            appointment["provider"] = offered[0]["provider"]
     except ToolFailed as e:
         return {"schedule": {"offered": [], "appointment": None, "error": e.message}}
     return {"schedule": {"offered": offered, "appointment": appointment, "error": None, "note": note}}
