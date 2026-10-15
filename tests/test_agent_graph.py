@@ -233,3 +233,12 @@ def test_failed_draft_on_an_outreach_turn_sends_nothing_to_the_patient():
 
     s = turn("C1", agents={"message_writer": bad_writer})
     assert s["outcome"]["nurse_task"]["kind"] == "review" and outbound("C1") == []
+
+
+def test_a_question_about_visit_types_gets_real_slots_not_a_promise():
+    async def asks(state, gw):
+        return {"intent": {"intent": "question", "accepts": False, "details": {"mode": "in_person"}}}
+
+    turn("C1")
+    s = turn("C1", "Do you have clinic visits instead?", channel="email", agents={"reply_interpreter": asks})
+    assert "scheduler" in s["path"] and s["schedule"]["offered"]

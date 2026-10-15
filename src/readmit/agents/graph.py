@@ -466,12 +466,18 @@ def after_identity(state: TurnState) -> str:
     return "reply_interpreter" if state["identity"].get("verified") else END
 
 
+SCHEDULING_DETAILS = ("mode", "preferred_days", "part_of_day", "earliest_time", "latest_time", "choice")
+
+
 def after_interpreter(state: TurnState) -> str:
     if state.get("escalate_reason"):
         return "escalate"
     intent = state["intent"]["intent"]
+    details = state["intent"].get("details") or {}
     if intent in ("wants_visit", "reschedule"):
         return "scheduler"
+    if intent == "question" and any(details.get(k) for k in SCHEDULING_DETAILS):
+        return "scheduler"  # "do you have clinic visits?" needs real slots, not a promise
     if intent in ("question", "barrier"):
         return "care_planner"
     if intent == "channel_change":

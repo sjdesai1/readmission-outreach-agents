@@ -415,3 +415,11 @@ def test_reviewer_sees_doctors_and_the_conversation(fake_llm):
     review = json.loads(next(p for p in prompts if p["task"] == "review_message")["user"])
     assert review["facts"]["offered_slots"][0]["with"] == "Dr. Test"
     assert "conversation" in review and "remembered_this_turn" in review["facts"]
+
+
+def test_reviewer_escalate_without_medical_advice_gets_one_rewrite_first(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    answers["review_message"] = {"verdict": "escalate", "reasons": ["Promises something not in the facts."]}
+    s = turn("C1")
+    assert s["path"].count("message_writer") == 2 and s["outcome"]["action"] == "escalated"

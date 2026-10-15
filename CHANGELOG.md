@@ -31,6 +31,9 @@ each minor version is a finished milestone.
 - Interpreter re-saved preferences from earlier messages as new ones; interpret v4, and code skips unchanged keys
 - Remembered "afternoons" was dropped when the patient named a day; days and time of day now combine
 - Scheduler offered only video when the patient had no preference; schedule_step v2 offers a mix
+- "Do you have clinic visits?" was read as a question: the writer promised visits with no slots behind it;
+  interpret v5, writer v5, and code routes questions with scheduling details to the scheduler
+- Reviewer escalated fixable drafts straight to a nurse; only medical advice skips the rewrite now
 - Writer phrasing "an in the clinic visit"
 - Agents booked a time the patient had ruled out ("can't do noon" booked noon)
 - Actions were possible on a case before it opened (booking dated before discharge)
