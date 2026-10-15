@@ -59,6 +59,8 @@ def pg(monkeypatch):
                 c.execute(sa.text("create database app_test"))
     except Exception as e:  # noqa: BLE001 - no database available: skip, don't fail
         pytest.skip(f"Postgres not reachable: {e}")
+    finally:
+        admin.dispose()  # close its connection now, not whenever garbage collection gets to it
     monkeypatch.setattr(db, "settings", test_settings)
     db.engine.cache_clear()
     monkeypatch.setattr(store, "_send_email", lambda to, subject, body: None)
@@ -93,6 +95,7 @@ def pg(monkeypatch):
             )
     store.set_now(NOW)
     yield
+    db.engine().dispose()  # each test's pool is closed, so 100+ tests never exhaust Postgres connections
     db.engine.cache_clear()
 
 
