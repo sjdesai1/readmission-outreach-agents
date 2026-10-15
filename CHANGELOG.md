@@ -8,6 +8,8 @@ each minor version is a finished milestone.
 ### Added
 - Milestone 3 (in progress): LangGraph turn graph with rule nodes and an MCP gateway with per-role tool access
 - Reply interpreter, care planner and message writer agents with versioned prompts and Pydantic schemas
+- Scheduler agent: tool-calling loop over the scheduling MCP server with runtime tool discovery; code injects
+  case and idempotency keys and blocks invented or ruled-out slots; rule-based fallback
 - Guardrails: STOP keywords, emergencies, family-member replies, injection flags, invented-time and tone checks,
   no diagnosis outside the patient portal, booking guard that never books a time the patient ruled out
 - Privacy: the LLM never sees the patient's name; contacts masked in prompts and traces
