@@ -21,14 +21,16 @@ from readmit.llm import LLMError, complete_json, load_prompt
 
 # interpret_reply v2: accepts only a specific time, exact time bounds. v3: standing preferences.
 #                 v4: details from the new reply only (not repeated from earlier messages).
+#                 v5: asking what visits or times exist is wants_visit, not question.
+# write_message v5: never says visits or times are available unless offered slots are given.
 # review_message v2: doctor names, own doctor and the conversation are facts; "we'll remember" is expected.
 # schedule_step v2: standing preferences as filters, a mix of video and clinic when the patient has no preference.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
 #               v4: "clinic visit" label, standing preferences, saying what was remembered.
 PROMPTS = {
-    "interpret_reply": "v4",
+    "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v4",
+    "write_message": "v5",
     "schedule_step": "v2",
     "review_message": "v2",
 }
@@ -477,6 +479,8 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
     reasons = r.reasons or [f"failed check: {k}" for k in failed]
     if not r.checks.no_medical_advice:  # medical advice is never rewritten into shape: a nurse takes over
         verdict = "escalate"
+    elif verdict == "escalate":  # anything else gets one rewrite first; a second failure still reaches a nurse
+        verdict = "revise"
     return {"review": {"verdict": verdict, "reasons": reasons, "failed_checks": failed}}
 
 
