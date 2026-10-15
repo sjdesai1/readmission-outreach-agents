@@ -5,6 +5,13 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Added
+- Milestone 4 step 1: simulated days (`make simulate days=14`): hourly clock, held messages delivered, outreach
+  turns in daytime hours only
+- Outreach cadence: day 0, follow-up at +48h, a phone call at +96h if calls are allowed, then closed as
+  unreachable; writer v7 says it's following up
+- Booked and nurse-held cases are no longer outreach-due
+
 ### Fixed
 - Flaky "too many clients" test error: the test fixture now closes its database connections after each test
 

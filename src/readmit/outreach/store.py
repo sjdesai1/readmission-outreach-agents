@@ -866,7 +866,8 @@ def add_note(case_id: str, note: str) -> dict:
 
 
 def due_cases(limit: int = 500) -> list[dict]:
-    """Open cases whose next action is due at the simulated now (used by the sequencer, not by agents)."""
+    """Open cases whose next outreach is due at the simulated now (used by the sequencer, not by agents).
+    Booked cases (reminders come later) and cases with a nurse are not outreach-due."""
     with db.transaction() as c:
         return db.rows(
             c,
@@ -874,7 +875,7 @@ def due_cases(limit: int = 500) -> list[dict]:
                              where status <> all(:closed) and opened_at <= :t
                                and (next_action_at is null or next_action_at <= :t)
                              order by risk desc limit :lim""",
-            closed=list(CLOSED_STATUSES),
+            closed=[*CLOSED_STATUSES, "booked", "escalated"],
             t=now(c),
             lim=limit,
         )

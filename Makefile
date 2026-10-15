@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn
+        outreach-setup mcp-logs inspector turn simulate
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -91,3 +91,6 @@ inspector:      ## open MCP Inspector (browser UI) to call any server's tools by
 # ---- milestone 3: multi-agent graph ----
 turn:           ## one agent turn by hand: make turn c=C000856 at=2026-09-10T09:00   (add reply="yes" ch=sms, stub=1)
 	uv run python -m readmit.agents.run $(c) $(if $(at),--at $(at)) $(if $(reply),--reply "$(reply)" --channel $(or $(ch),sms)) $(if $(stub),--stub)
+
+simulate:       ## run outreach over simulated days: make simulate days=14 (llm=1 for the real agents, cases=5 to cap)
+	uv run python -m readmit.sim.days --days $(or $(days),14) $(if $(llm),--llm) $(if $(cases),--max-cases $(cases))
