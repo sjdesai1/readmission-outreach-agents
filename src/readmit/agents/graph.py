@@ -15,7 +15,8 @@ message_writer -> output_checks -> safety_reviewer -> send      (one rewrite all
 
 escalate = nurse handoff: a task with an honest due time (urgent within the hour, routine by 5 PM on the next
 business day with capacity), a fixed acknowledgement to the patient, and the AI pauses on the case until a
-nurse hands it back. The AI never answers clinical questions itself.
+nurse hands it back. The AI never answers clinical questions itself. While paused, a patient reply still goes
+through input_guard: STOP and emergencies are handled, anything else is flagged for the nurse (hold_for_nurse).
 """
 
 import hashlib
@@ -30,7 +31,8 @@ from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize
 from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel, when, when_es
 from readmit.agents.stubs import STUBS
 
-CLOSED = {"suppressed", "completed", "opted_out", "readmitted", "closed", "escalated"}
+CLOSED = {"suppressed", "completed", "opted_out", "readmitted", "closed"}
+PAUSED = {"escalated"}  # a nurse has the case: the AI stays quiet, but STOP and emergencies are still handled
 RECENT = 6  # messages kept word for word; older ones become a one-line digest
 FOLLOW_UP_AFTER = timedelta(hours=48)
 
@@ -81,7 +83,7 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
     cid = state["case_id"]
     now = await gw.call("scheduling", "get_current_time")
     case = await gw.call("cases", "get_case", case_id=cid)
-    if case["status"] in CLOSED:
+    if case["status"] in CLOSED or (case["status"] in PAUSED and state["trigger"] != "inbound_reply"):
         return {"now": now, "case": case, "skip": f"case is {case['status']}"}
     if parse_dt(case["opened_at"]) > parse_dt(now):
         return {"now": now, "case": case, "skip": "case not open yet"}
@@ -122,6 +124,7 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
         "skip": None,
         "revisions": 0,
         "inbound": pseudonymize(state.get("inbound"), name),
+        "paused": case["status"] in PAUSED,
     }
 
 
@@ -292,6 +295,14 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
     }
 
 
+async def hold_for_nurse(state: TurnState, gw: Gateway) -> dict:
+    """A nurse has this case. The AI doesn't reply; the message is flagged on the case for the nurse."""
+    await gw.call(
+        "cases", "add_case_note", case_id=state["case_id"], note="patient wrote while with a nurse; no AI reply"
+    )
+    return {"outcome": {"action": "held_for_nurse"}}
+
+
 async def remember(state: TurnState, gw: Gateway) -> dict:
     """Save standing preferences the patient stated ("I work mornings", "video is easier for me").
     Only when the interpreter marked them as standing, and only known keys."""
@@ -453,6 +464,8 @@ def after_context(state: TurnState) -> str:
 
 
 def after_guard(state: TurnState) -> str:
+    if state.get("paused") and state["guard"]["action"] not in ("opt_out", "emergency"):
+        return "hold_for_nurse"
     return {
         "opt_out": "opt_out",
         "emergency": "escalate",
@@ -545,6 +558,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         "apply_channel_change": apply_channel_change,
         "identity_check": identity_check,
         "remember": remember,
+        "hold_for_nurse": hold_for_nurse,
     }
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
@@ -562,8 +576,11 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     g.add_edge(START, "load_context")
     g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", END])
     g.add_conditional_edges(
-        "input_guard", after_guard, ["opt_out", "escalate", "proxy_reply", "identity_check", "reply_interpreter"]
+        "input_guard",
+        after_guard,
+        ["opt_out", "escalate", "proxy_reply", "identity_check", "reply_interpreter", "hold_for_nurse"],
     )
+    g.add_edge("hold_for_nurse", END)
     g.add_conditional_edges("identity_check", after_identity, ["reply_interpreter", "escalate", END])
     g.add_edge("reply_interpreter", "remember")
     g.add_conditional_edges(

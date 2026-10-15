@@ -206,7 +206,9 @@ def test_symptom_is_urgent_and_the_ack_goes_out_even_at_night():
 
 def test_the_ai_stays_quiet_until_a_nurse_hands_the_case_back():
     s = turn("C2", "can I talk to a nurse?", agents=reads_as("wants_human"))
-    assert turn("C2", "hello?")["skip"] == "case is escalated"  # the nurse owns the conversation now
+    before = len(outbound("C2"))
+    assert turn("C2", "hello?")["outcome"]["action"] == "held_for_nurse"  # the nurse owns the conversation now
+    assert len(outbound("C2")) == before
     store.resolve_nurse_task(s["outcome"]["nurse_task"]["task_id"], "called, answered", hand_back=True)
     assert store.get_case("C2")["status"] == "awaiting_reply"
     assert turn("C2", "ok thanks, book me")["outcome"]["action"] == "sent"
@@ -242,3 +244,15 @@ def test_a_question_about_visit_types_gets_real_slots_not_a_promise():
     turn("C1")
     s = turn("C1", "Do you have clinic visits instead?", channel="email", agents={"reply_interpreter": asks})
     assert "scheduler" in s["path"] and s["schedule"]["offered"]
+
+
+def test_an_emergency_while_a_nurse_has_the_case_still_gets_911():
+    turn("C2", "can I talk to a nurse?", agents=reads_as("wants_human"))
+    s = turn("C2", "ahora tengo dolor de pecho")
+    assert s["path"] == ["load_context", "input_guard", "escalate"]
+    assert "911" in outbound("C2")[-1]["body"] and s["outcome"]["nurse_task"]["priority"] == "urgent"
+
+
+def test_paused_case_gets_no_outreach_turns():
+    turn("C2", "can I talk to a nurse?", agents=reads_as("wants_human"))
+    assert turn("C2")["skip"] == "case is escalated"
