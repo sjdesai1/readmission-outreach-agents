@@ -150,3 +150,30 @@ def test_identity_check_never_reveals_the_answer_and_locks():
     assert store.verify_identity("C2", 1968) == {"verified": True}
     types = [e["type"] for e in store.get_case("C1")["recent_events"]]
     assert types == ["identity_failed", "identity_failed", "identity_locked"]
+
+
+# ------------------------------------------------------------------ nurse handoff and memory
+def test_nurse_queue_is_urgent_first_idempotent_and_hands_back():
+    routine = store.create_nurse_task("C1", "callback", "routine", "wants a call", "k1")
+    again = store.create_nurse_task("C1", "callback", "routine", "wants a call", "k1")
+    assert again["task_id"] == routine["task_id"] and "already" in again["note"]
+    urgent = store.create_nurse_task("C2", "symptom", "urgent", "swelling", "k2")
+    assert [t["task_id"] for t in store.list_nurse_tasks()] == [urgent["task_id"], routine["task_id"]]
+    assert store.get_case("C1")["status"] == "escalated"
+    store.resolve_nurse_task(routine["task_id"], "called back", hand_back=True)
+    assert store.get_case("C1")["status"] == "awaiting_reply"
+    assert [t["task_id"] for t in store.list_nurse_tasks()] == [urgent["task_id"]]
+
+
+def test_routine_tasks_skip_the_weekend():
+    store.set_now(datetime(2026, 9, 11, 16, 0))  # Friday afternoon
+    t = store.create_nurse_task("C1", "clinical_question", "routine", "med question", "k3")
+    assert t["due_at"].startswith("2026-09-14 17:00")  # Monday
+
+
+def test_memory_takes_known_keys_only_and_the_latest_wins():
+    with pytest.raises(StoreError):
+        store.remember_preference("C1", "favourite_color", "blue", "x")
+    store.remember_preference("C1", "part_of_day", "morning", "mornings are best")
+    store.remember_preference("C1", "part_of_day", "afternoon", "actually I work mornings now")
+    assert store.patient_summary("C1")["memory"] == {"part_of_day": "afternoon"}

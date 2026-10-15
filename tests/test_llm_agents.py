@@ -6,6 +6,7 @@ the rules override the model where they must, and failures degrade safely.
 
 import asyncio
 import json
+from datetime import datetime
 
 import pytest
 
@@ -31,7 +32,11 @@ def fake_llm(monkeypatch):
         return schema.model_validate(a(json.loads(user)) if callable(a) else a), None
 
     monkeypatch.setattr(llm_agents, "complete_json", complete_json)
+    answers["review_message"] = APPROVE  # tests that care about the reviewer replace this
     return answers, prompts
+
+
+APPROVE = {"verdict": "approve", "reasons": [], "checks": {}}
 
 
 PLAN = {
@@ -66,7 +71,7 @@ def test_full_outreach_turn_with_llm_agents(fake_llm):
     assert s["outcome"]["action"] == "sent"
     sent = store.get_thread("C1")[-1]
     assert sent["body"].startswith("Hi Maria,")  # name filled in at send time
-    assert [p["task"] for p in prompts] == ["plan_care", "write_message"]
+    assert [p["task"] for p in prompts] == ["plan_care", "write_message", "review_message"]
     assert all("Maria" not in p["user"] for p in prompts)  # the LLM never saw the name
     assert "Maria" not in json.dumps(s, default=str)  # nor did the state or the traces
     assert [e["type"] for e in store.get_case("C1")["recent_events"]][:1] == ["referral_requested"]
@@ -296,3 +301,91 @@ def test_scheduler_llm_down_falls_back_to_rules(fake_llm):
     answers |= {"interpret_reply": wants(), "schedule_step": LLMError("down"), "write_message": offer}
     s = turn("C1", "yes")
     assert s["schedule"]["appointment"]["status"] == "booked"
+
+
+# ------------------------------------------------------------------ safety reviewer
+def test_reviewer_sends_a_draft_back_with_reasons(fake_llm):
+    answers, prompts = fake_llm
+    answers["plan_care"] = PLAN
+    seen = []
+
+    def writer(user):
+        seen.append(user["checker_feedback"])
+        return offer(user)
+
+    def review(user):
+        if len([p for p in prompts if p["task"] == "review_message"]) == 1:
+            return {"verdict": "revise", "reasons": ["Sounds cold; add a warm opening."], "checks": {}}
+        return APPROVE
+
+    answers["write_message"], answers["review_message"] = writer, review
+    s = turn("C1")
+    assert s["outcome"]["action"] == "sent" and s["path"].count("message_writer") == 2
+    assert seen[1] == ["Sounds cold; add a warm opening."]
+
+
+def test_reviewer_checks_overrule_its_own_approve(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    answers["review_message"] = {"verdict": "approve", "reasons": [], "checks": {"respectful_tone": False}}
+    s = turn("C1")
+    assert s["path"].count("message_writer") == 2  # treated as revise
+
+
+def test_medical_advice_goes_to_a_nurse_not_a_rewrite(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    answers["review_message"] = {
+        "verdict": "revise",
+        "reasons": ["Tells the patient to keep taking their pills."],
+        "checks": {"no_medical_advice": False},
+    }
+    s = turn("C1")
+    assert s["outcome"]["action"] == "escalated" and s["path"].count("message_writer") == 1
+    assert "safety reviewer" in s["outcome"]["reason"]
+
+
+def test_reviewer_down_still_sends_after_the_rule_checks(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    answers["review_message"] = LLMError("timeout")
+    s = turn("C1")
+    assert s["outcome"]["action"] == "sent" and s["review"]["unavailable"]
+
+
+# ------------------------------------------------------------------ patient memory
+def test_standing_preference_is_remembered_and_used_later(fake_llm, add_slot):
+    answers, prompts = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    turn("C1")
+    answers["interpret_reply"] = {
+        "intent": "wants_visit",
+        "part_of_day": "afternoon",
+        "standing": True,
+        "confidence": 0.9,
+    }
+    answers["schedule_step"] = LLMError("down")  # rule-based scheduler: deterministic for the test
+    add_slot("S6", datetime(2026, 9, 10, 14, 0))
+    s = turn("C1", "I work mornings, so afternoons are always better")
+    assert s["remembered"] == ["part_of_day"]
+    assert all(int(x["start_at"][11:13]) >= 12 for x in s["schedule"]["offered"])
+    assert store.patient_summary("C1")["memory"] == {"part_of_day": "afternoon"}
+    writer_input = json.loads([p for p in prompts if p["task"] == "write_message"][-1]["user"])
+    assert writer_input["remembered_this_turn"] == ["part_of_day"]
+
+
+def test_one_off_request_is_not_remembered(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    turn("C1")
+    answers["interpret_reply"] = {"intent": "wants_visit", "preferred_days": ["Thursday"], "confidence": 0.9}
+    answers["schedule_step"] = LLMError("down")
+    s = turn("C1", "Thursday works this week")
+    assert not s.get("remembered") and store.patient_summary("C1")["memory"] == {}
+
+
+def test_symptoms_are_never_remembered_as_preferences(fake_llm):
+    answers, _ = fake_llm
+    answers["interpret_reply"] = {"intent": "symptom", "part_of_day": "morning", "standing": True, "confidence": 0.9}
+    s = turn("C1", "my ankles feel puffy every morning")
+    assert "remember" in s["path"] and not s.get("remembered")

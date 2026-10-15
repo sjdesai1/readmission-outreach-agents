@@ -4,7 +4,7 @@ python -m readmit.mcp.patient_data          # http://localhost:8101/mcp
 """
 
 import json
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -15,7 +15,7 @@ from readmit.outreach import store
 mcp = FastMCP(
     name="patient_data",
     instructions="Patient context for outreach, minimum necessary: first name, language, allowed channels, the "
-    "recent stay, risk drivers and barriers. Contact details (phone, email) are never returned; the "
+    "recent stay, risk drivers, barriers and standing preferences. Contact details (phone, email) are never returned; the "
     "messaging server handles delivery. verify_identity checks a year of birth without revealing it.",
 )
 
@@ -38,6 +38,20 @@ def verify_identity(
     """Check a stated year of birth against the record. Returns only `verified` (true/false) and attempts left,
     never the real value. Locks after 3 failed attempts; then a nurse must verify."""
     return call(store.verify_identity, case_id, birth_year)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+def remember_preference(
+    case_id: CaseId,
+    key: Annotated[
+        Literal["part_of_day", "earliest_time", "latest_time", "mode", "preferred_days"],
+        Field(description="Which standing preference"),
+    ],
+    value: Annotated[str | list[str], Field(description="The preference, e.g. 'morning', '14:00', ['Tuesday']")],
+    source: Annotated[str, Field(description="What the patient said, briefly")],
+) -> dict:
+    """Save a standing preference the patient stated ("I work mornings"), reused in later turns and stays."""
+    return call(store.remember_preference, case_id, key, value, source)
 
 
 @mcp.resource("patient://{case_id}/summary", mime_type="application/json")

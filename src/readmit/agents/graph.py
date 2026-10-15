@@ -3,17 +3,19 @@
 load_context -> input_guard -> route
   phone reply, identity not yet confirmed -> identity_check (year of birth, checked server-side) -> continue / ask
   outreach_due  -> care_planner -> scheduler -> message_writer
-  inbound_reply -> reply_interpreter -> by intent:
+  inbound_reply -> reply_interpreter -> remember (standing preferences) -> by intent:
         wants_visit / reschedule -> scheduler -> message_writer
         question / barrier       -> care_planner -> message_writer
         decline                  -> message_writer
         channel_change           -> apply_channel_change -> message_writer (answers on the new channel)
-        clinical_question / wants_human / symptom / abusive -> escalate   (nurse handoff comes in step 5)
         opt_out                  -> opt_out
         third_party              -> proxy_reply  (family member: privacy-safe template, no LLM)
-        symptom / abusive        -> escalate
-        unclear (2nd time)       -> escalate
+        symptom / clinical_question / wants_human / abusive / unclear (2nd time) -> escalate
 message_writer -> output_checks -> safety_reviewer -> send      (one rewrite allowed, then escalate)
+
+escalate = nurse handoff: a task with an honest due time (urgent within the hour, routine by 5 PM on the next
+business day with capacity), a fixed acknowledgement to the patient, and the AI pauses on the case until a
+nurse hands it back. The AI never answers clinical questions itself.
 """
 
 import hashlib
@@ -25,7 +27,7 @@ from langgraph.graph import END, START, StateGraph
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import check_draft, screen_inbound
 from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize_summary, render
-from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel
+from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel, when, when_es
 from readmit.agents.stubs import STUBS
 
 CLOSED = {"suppressed", "completed", "opted_out", "readmitted", "closed", "escalated"}
@@ -53,6 +55,19 @@ ID_RETRY = {
     "Spanish": "Lo siento, eso no coincide con nuestros registros. ¿Podría decirme su año de nacimiento otra vez?",
 }
 YEAR_RE = re.compile(r"\b(19\d{2}|20[0-2]\d)\b")
+SYMPTOM_ACK = {
+    "English": "Thank you for telling us. A nurse from your care team will contact you within the hour. "
+    "If it gets worse, or you think it is an emergency, call 911.",
+    "Spanish": "Gracias por avisarnos. Una enfermera de su equipo de atención se comunicará con usted en la "
+    "próxima hora. Si empeora, o cree que es una emergencia, llame al 911.",
+}
+CALLBACK_ACK = {  # the time is the nurse task's real due time, never a promise the queue can't keep
+    "English": "Thank you. A nurse from your care team will contact you by {due}. "
+    "If anything gets worse before then, call your doctor's office, or 911 in an emergency.",
+    "Spanish": "Gracias. Una enfermera de su equipo de atención se comunicará con usted antes del {due}. "
+    "Si algo empeora antes, llame al consultorio de su médico, o al 911 en una emergencia.",
+}
+MEMORY_KEYS = ("part_of_day", "earliest_time", "latest_time", "mode", "preferred_days")
 OPT_OUT_MSG = {
     "English": "You will not receive more outreach messages from the Orchard Valley care team. "
     "For medical questions, contact your doctor's office.",
@@ -190,12 +205,32 @@ async def send(state: TurnState, gw: Gateway) -> dict:
     }
 
 
+def _handoff(state: TurnState) -> tuple[str, str, str | None]:
+    """(task kind, priority, which acknowledgement the patient gets). Decided by code, never by an LLM."""
+    if state.get("urgent"):
+        return "emergency", "urgent", None  # the 911 message is sent separately, first
+    intent = (state.get("intent") or {}).get("intent")
+    replied = state.get("trigger") == "inbound_reply" and bool(state.get("inbound_channel"))
+    if intent == "symptom":
+        return "symptom", "urgent", "symptom" if replied else None
+    if intent == "clinical_question":
+        return "clinical_question", "routine", "callback" if replied else None
+    if intent in ("wants_human", "unclear"):
+        return "callback", "routine", "callback" if replied else None
+    identity_failed = state.get("identity") is not None and not state["identity"].get("verified")
+    if intent == "abusive" or identity_failed:
+        return "review", "routine", None  # no reply: nothing useful or safe to say
+    # system trouble (draft failed twice, LLM down, no channel...): the patient who wrote still hears back
+    return "review", "routine", "callback" if replied else None
+
+
 async def escalate(state: TurnState, gw: Gateway) -> dict:
     cid = state["case_id"]
     reason = state.get("escalate_reason") or _why_escalate(state)
     lang = (state.get("summary") or {}).get("patient", {}).get("preferred_language", "English")
-    sent = None
-    if state.get("urgent") and state.get("inbound_channel"):
+    kind, priority, ack = _handoff(state)
+    safety_id = ack_id = task = None
+    if kind == "emergency" and state.get("inbound_channel"):  # safety first: before anything else
         try:
             sent = await gw.call(
                 "messaging",
@@ -206,19 +241,86 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
                 priority="safety",
                 idempotency_key=f"{state['turn_key']}:safety",
             )
+            safety_id = sent["message_id"]
         except ToolFailed:
             pass  # the nurse still gets the case; never let a failed send hide an emergency
-    await gw.call("cases", "add_case_note", case_id=cid, note=f"escalated: {reason}")
-    await gw.call("cases", "update_case_status", case_id=cid, status="escalated", reason=reason[:300])
+    try:
+        task = await gw.call(
+            "cases",
+            "create_nurse_task",
+            case_id=cid,
+            kind=kind,
+            priority=priority,
+            reason=reason[:300],
+            summary=(state.get("inbound") or "")[:300] or None,
+            idempotency_key=f"{state['turn_key']}:nurse",
+        )
+    except ToolFailed as e:  # the queue is down: still pause the AI and leave a note a human will see
+        reason = f"{reason} (nurse task failed: {e.message})"
+        await gw.call("cases", "update_case_status", case_id=cid, status="escalated", reason=reason[:300])
+    if ack and task:
+        if ack == "symptom":
+            body, prio = SYMPTOM_ACK.get(lang, SYMPTOM_ACK["English"]), "safety"
+        else:
+            due = (when_es if lang == "Spanish" else when)(task["due_at"])
+            body, prio = CALLBACK_ACK.get(lang, CALLBACK_ACK["English"]).format(due=due), "normal"
+        try:
+            sent = await gw.call(
+                "messaging",
+                "send_message",
+                case_id=cid,
+                channel=state["inbound_channel"],
+                body=body,
+                priority=prio,
+                idempotency_key=f"{state['turn_key']}:ack",
+            )
+            ack_id = sent["message_id"]
+        except ToolFailed:
+            pass  # the task exists; the nurse will reach out regardless
+    await gw.call("cases", "add_case_note", case_id=cid, note=f"escalated ({kind}, {priority}): {reason}")
     return {
         "escalate_reason": reason,
+        "nurse_task": task,
         "outcome": {
             "action": "escalated",
-            "urgent": bool(state.get("urgent")),
+            "urgent": priority == "urgent",
             "reason": reason,
-            "safety_message_id": sent["message_id"] if sent else None,
+            "nurse_task": {k: task[k] for k in ("task_id", "kind", "priority", "due_at")} if task else None,
+            "safety_message_id": safety_id,
+            "ack_message_id": ack_id,
         },
     }
+
+
+async def remember(state: TurnState, gw: Gateway) -> dict:
+    """Save standing preferences the patient stated ("I work mornings", "video is easier for me").
+    Only when the interpreter marked them as standing, and only known keys."""
+    intent = state.get("intent") or {}
+    if not intent.get("standing"):
+        return {}
+    details = intent.get("details") or {}
+    memory = dict((state.get("summary") or {}).get("memory") or {})
+    saved = []
+    for key in MEMORY_KEYS:
+        value = details.get(key)
+        if value in (None, [], ""):
+            continue
+        try:
+            await gw.call(
+                "patient_data",
+                "remember_preference",
+                case_id=state["case_id"],
+                key=key,
+                value=value,
+                source=(state.get("inbound") or "")[:200],
+            )
+        except ToolFailed:
+            continue  # memory is a convenience, never a reason to stop the turn
+        memory[key] = value
+        saved.append(key)
+    if not saved:
+        return {}
+    return {"remembered": saved, "summary": {**state["summary"], "memory": memory}}
 
 
 async def opt_out(state: TurnState, gw: Gateway) -> dict:
@@ -435,6 +537,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         "proxy_reply": proxy_reply,
         "apply_channel_change": apply_channel_change,
         "identity_check": identity_check,
+        "remember": remember,
     }
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
@@ -455,8 +558,9 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         "input_guard", after_guard, ["opt_out", "escalate", "proxy_reply", "identity_check", "reply_interpreter"]
     )
     g.add_conditional_edges("identity_check", after_identity, ["reply_interpreter", "escalate", END])
+    g.add_edge("reply_interpreter", "remember")
     g.add_conditional_edges(
-        "reply_interpreter",
+        "remember",
         after_interpreter,
         ["scheduler", "care_planner", "opt_out", "proxy_reply", "apply_channel_change", "escalate", "message_writer"],
     )

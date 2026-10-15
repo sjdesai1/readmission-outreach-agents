@@ -104,6 +104,13 @@ def test_case_not_open_yet_is_skipped():
     assert s["path"] == ["load_context"] and s["skip"] == "case not open yet"
 
 
+def test_standing_preference_carries_over_to_the_next_outreach(add_slot):
+    add_slot("S6", datetime(2026, 9, 10, 14, 0))
+    store.remember_preference("C1", "part_of_day", "afternoon", "I work mornings")
+    s = turn("C1")
+    assert s["schedule"]["offered"] and all(int(x["start_at"][11:13]) >= 12 for x in s["schedule"]["offered"])
+
+
 def test_each_role_only_reaches_its_own_tools():
     gw = Gateway.in_memory()
     with pytest.raises(PermissionError):
@@ -167,3 +174,62 @@ def test_call_scripts_end_with_the_identity_question():
     turn("C2")
     assert outbound("C2")[-1]["channel"] == "phone"
     assert outbound("C2")[-1]["body"].endswith("¿podría decirme su año de nacimiento?")
+
+
+# ------------------------------------------------------------------ nurse handoff
+def reads_as(intent):
+    async def interpreter(state, gw):
+        return {"intent": {"intent": intent, "accepts": False, "details": {}}}
+
+    return {"reply_interpreter": interpreter}
+
+
+def test_clinical_question_becomes_a_nurse_task_with_an_honest_time():
+    turn("C1")  # Wed Sep 9: first outreach
+    s = turn("C1", "Can I take ibuprofen with my new pills?", channel="email", agents=reads_as("clinical_question"))
+    task = s["outcome"]["nurse_task"]
+    assert task["kind"] == "clinical_question" and task["priority"] == "routine"
+    assert task["due_at"].startswith("2026-09-10 17:00")  # next business day, 5 PM
+    ack = outbound("C1")[-1]["body"]
+    assert "by Thu Sep 10, 5:00 PM" in ack and "ibuprofen" not in ack  # promise matches the queue; no answer
+    assert store.get_case("C1")["status"] == "escalated"
+
+
+def test_symptom_is_urgent_and_the_ack_goes_out_even_at_night():
+    store.set_now(datetime(2026, 9, 9, 22, 0))
+    s = turn("C2", "mis tobillos están más hinchados", agents=reads_as("symptom"))
+    assert s["outcome"]["nurse_task"]["priority"] == "urgent"
+    assert s["outcome"]["nurse_task"]["due_at"].startswith("2026-09-09 23:00")
+    ack = next(m for m in outbound("C2") if m["message_id"] == s["outcome"]["ack_message_id"])
+    assert ack["status"] != "scheduled" and "próxima hora" in ack["body"]  # safety: not held for quiet hours
+
+
+def test_the_ai_stays_quiet_until_a_nurse_hands_the_case_back():
+    s = turn("C2", "can I talk to a nurse?", agents=reads_as("wants_human"))
+    assert turn("C2", "hello?")["skip"] == "case is escalated"  # the nurse owns the conversation now
+    store.resolve_nurse_task(s["outcome"]["nurse_task"]["task_id"], "called, answered", hand_back=True)
+    assert store.get_case("C2")["status"] == "awaiting_reply"
+    assert turn("C2", "ok thanks, book me")["outcome"]["action"] == "sent"
+
+
+def test_abusive_reply_gets_a_review_task_and_no_reply():
+    before = len(outbound("C2"))
+    s = turn("C2", "...", agents=reads_as("abusive"))
+    assert s["outcome"]["nurse_task"]["kind"] == "review" and len(outbound("C2")) == before
+
+
+def test_routine_callbacks_roll_to_the_next_day_when_the_nurses_are_full(monkeypatch):
+    monkeypatch.setattr(store, "NURSE_DAILY_CAPACITY", 1)
+    first = turn("C1", "call me please", channel="email", agents=reads_as("wants_human"))
+    second = turn("C2", "llámenme por favor", agents=reads_as("wants_human"))
+    assert first["outcome"]["nurse_task"]["due_at"].startswith("2026-09-10 17:00")
+    assert second["outcome"]["nurse_task"]["due_at"].startswith("2026-09-11 17:00")
+    assert "vie 11 sep, 5:00 PM" in outbound("C2")[-1]["body"]  # Spanish date, same honest time
+
+
+def test_failed_draft_on_an_outreach_turn_sends_nothing_to_the_patient():
+    async def bad_writer(state, gw):
+        return {"draft": {"subject": "x", "body": "See you Fri Sep 25, 4:00 PM!"}}
+
+    s = turn("C1", agents={"message_writer": bad_writer})
+    assert s["outcome"]["nurse_task"]["kind"] == "review" and outbound("C1") == []
