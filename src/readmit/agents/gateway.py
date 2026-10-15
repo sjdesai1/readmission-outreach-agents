@@ -71,6 +71,28 @@ class Gateway:
     def scoped(self, role: str) -> "Gateway":
         return Gateway(self.targets, role)
 
+    async def list_tools(self, server: str, hide: tuple[str, ...] = ("case_id", "idempotency_key")) -> list[dict]:
+        """Tool discovery: the server's tool names, descriptions and input schemas, filtered to this role.
+        Parameters in `hide` are removed from the schema: code supplies them, the model never chooses them."""
+        allowed = ACCESS.get(self.role or "", set())
+        async with Client(self.targets[server]) as client:
+            tools = await client.list_tools()
+        out = []
+        for t in tools:
+            if f"{server}.{t.name}" not in allowed:
+                continue
+            schema = dict(t.inputSchema or {})
+            props = {k: v for k, v in (schema.get("properties") or {}).items() if k not in hide}
+            required = [r for r in schema.get("required") or [] if r not in hide]
+            out.append(
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": {"type": "object", "properties": props, "required": required},
+                }
+            )
+        return out
+
     async def call(self, server: str, tool: str, **args):
         name = f"{server}.{tool}"
         if name not in ACCESS.get(self.role or "", set()):

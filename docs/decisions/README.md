@@ -10,3 +10,4 @@ a changed decision gets a new record that supersedes the old one.
 | [0003](0003-rules-behind-mcp.md) | Business rules live in the store behind MCP, not in prompts | Accepted |
 | [0004](0004-llm-never-sees-names.md) | The LLM never sees the patient's name or contact details | Accepted |
 | [0005](0005-versioned-prompts.md) | Prompts are versioned files, never edited in place | Accepted |
+| [0006](0006-scheduler-agent-loop.md) | Scheduler agent: structured action loop over MCP, guarded by code | Accepted |

@@ -127,8 +127,9 @@ def test_writer_gets_checker_feedback_on_rewrite(fake_llm):
     assert any("ALL CAPS" in f for f in rewrite["checker_feedback"])
 
 
-def test_never_books_a_time_the_patient_ruled_out(fake_llm):
+def test_rule_based_fallback_never_books_a_time_the_patient_ruled_out(fake_llm):
     answers, _ = fake_llm
+    answers["schedule_step"] = LLMError("down")  # scheduler agent unavailable: the rule-based path runs
     answers |= {
         "interpret_reply": {
             "intent": "wants_visit",
@@ -144,8 +145,9 @@ def test_never_books_a_time_the_patient_ruled_out(fake_llm):
     assert store.get_case("C1")["status"] != "booked"
 
 
-def test_books_when_the_choice_fits(fake_llm):
+def test_rule_based_fallback_books_when_the_choice_fits(fake_llm):
     answers, _ = fake_llm
+    answers["schedule_step"] = LLMError("down")
     answers |= {
         "interpret_reply": {
             "intent": "wants_visit",
@@ -180,3 +182,117 @@ def test_channel_change_without_contact_details_is_explained(fake_llm):
     }
     s = turn("C1", "text me instead", channel="email")  # no mobile number on file
     assert not s["channel_change"]["ok"] and s["outcome"]["channel"] == "email"
+
+
+# ------------------------------------------------------------------ scheduler agent
+def wants(**details):
+    return {"intent": "wants_visit", "accepts_offer": True, "confidence": 0.9, **details}
+
+
+def steps(*plan):
+    """A scripted scheduler: returns plan[i] at step i (each item may use the results seen so far)."""
+
+    def next_action(user):
+        done = user["steps_so_far"]
+        item = plan[min(len(done), len(plan) - 1)]
+        return item(done) if callable(item) else item
+
+    return next_action
+
+
+def found(done):
+    return next(s["result"] for s in done if s["tool"] == "find_slots" and isinstance(s["result"], list))
+
+
+def test_scheduler_agent_books_the_option_the_patient_picked(fake_llm):
+    answers, prompts = fake_llm
+    answers |= {
+        "interpret_reply": wants(choice="the second one"),
+        "schedule_step": steps(
+            {"action": "call_tool", "tool": "find_slots", "args": {"limit": 3}},
+            lambda done: {
+                "action": "call_tool",
+                "tool": "book_appointment",
+                "args": {"slot_id": found(done)[1]["slot_id"]},
+            },
+        ),
+        "write_message": lambda u: {"subject": "Booked", "body": f"You're booked for {u['appointment']['when']}."},
+    }
+    s = turn("C1", "the second one please")
+    assert s["schedule"]["appointment"]["start_at"].startswith("2026-09-11")  # S2, not the first slot
+    tools = json.loads(next(p for p in prompts if p["task"] == "schedule_step")["user"])["tools"]
+    assert all("case_id" not in t["parameters"]["properties"] for t in tools)  # the model can't pick the patient
+
+
+def test_scheduler_cannot_book_a_slot_it_never_saw(fake_llm):
+    answers, _ = fake_llm
+    answers |= {
+        "interpret_reply": wants(),
+        "schedule_step": steps(
+            {"action": "call_tool", "tool": "book_appointment", "args": {"slot_id": "S999"}},
+            {"action": "call_tool", "tool": "find_slots", "args": {}},
+            lambda done: {"action": "offer", "slot_ids": [x["slot_id"] for x in found(done)[:2]]},
+        ),
+        "write_message": offer,
+    }
+    s = turn("C1", "yes")
+    assert s["schedule"]["appointment"] is None and len(s["schedule"]["offered"]) == 2
+    assert "not returned by find_slots" in s["schedule"]["agent_steps"][0]["result"]["error"]
+
+
+def test_scheduler_cannot_book_a_time_the_patient_ruled_out(fake_llm):
+    answers, _ = fake_llm
+    answers |= {
+        "interpret_reply": wants(earliest_time="14:00"),  # fixture slots are all at 9:00
+        "schedule_step": steps(
+            {"action": "call_tool", "tool": "find_slots", "args": {}},
+            lambda done: {
+                "action": "call_tool",
+                "tool": "book_appointment",
+                "args": {"slot_id": found(done)[0]["slot_id"]},
+            },
+            {"action": "give_up", "note": "nothing after 2 PM"},
+        ),
+        "write_message": offer,
+    }
+    s = turn("C1", "yes but only after 2")
+    assert s["schedule"]["appointment"] is None and store.get_case("C1")["status"] != "booked"
+    assert "contradicts what the patient asked" in s["schedule"]["agent_steps"][1]["result"]["error"]
+
+
+def test_scheduler_moves_an_existing_appointment(fake_llm):
+    answers, _ = fake_llm
+    store.book_appointment("C1", "S1", "first-booking")  # Thu Sep 10
+    answers |= {
+        "interpret_reply": {
+            "intent": "reschedule",
+            "accepts_offer": True,
+            "preferred_days": ["Friday"],
+            "confidence": 0.9,
+        },
+        "schedule_step": steps(
+            {"action": "call_tool", "tool": "find_slots", "args": {}},
+            lambda done: {
+                "action": "call_tool",
+                "tool": "reschedule_appointment",
+                "args": {"new_slot_id": next(x["slot_id"] for x in found(done) if "Fri" in x["when"])},
+            },
+        ),
+        "write_message": lambda u: {"subject": "Moved", "body": f"You're booked for {u['appointment']['when']}."},
+    }
+    s = turn("C1", "can we move it to friday")
+    assert s["schedule"]["appointment"]["start_at"].startswith("2026-09-11")
+
+
+def test_first_outreach_needs_no_scheduler_llm_call(fake_llm):
+    answers, prompts = fake_llm
+    answers |= {"plan_care": {**PLAN, "referrals": []}, "write_message": offer}
+    turn("C1")
+    assert "schedule_step" not in [p["task"] for p in prompts]
+
+
+def test_scheduler_llm_down_falls_back_to_rules(fake_llm):
+    answers, _ = fake_llm
+    answers |= {"interpret_reply": wants(), "schedule_step": LLMError("down"), "write_message": offer}
+    s = turn("C1", "yes")
+    assert s["schedule"]["appointment"]["status"] == "booked"

@@ -15,12 +15,14 @@ from pydantic import BaseModel, Field
 
 from readmit.agents import stubs
 from readmit.agents.gateway import Gateway, ToolFailed
-from readmit.agents.state import TurnState, reply_channel
+from readmit.agents.guards import slot_fits
+from readmit.agents.state import TurnState, reply_channel, when
 from readmit.llm import LLMError, complete_json, load_prompt
 
 # interpret_reply v2: accepts only a specific time, exact time bounds.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
-PROMPTS = {"interpret_reply": "v2", "plan_care": "v1", "write_message": "v3"}
+PROMPTS = {"interpret_reply": "v2", "plan_care": "v1", "write_message": "v3", "schedule_step": "v1"}
+MAX_SCHEDULER_STEPS = 5
 MIN_CONFIDENCE = 0.5
 
 Intent = Literal[
@@ -251,4 +253,158 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
     return {"draft": {"subject": d.subject, "body": d.body.strip()}}
 
 
-LLM_AGENTS = {"reply_interpreter": reply_interpreter, "care_planner": care_planner, "message_writer": message_writer}
+# ------------------------------------------------------------------ scheduler (tool-calling loop over MCP)
+class SchedulerAction(BaseModel):
+    thought: str = Field(default="", max_length=300)
+    action: Literal["call_tool", "offer", "give_up"]
+    tool: str | None = None
+    args: dict = Field(default_factory=dict)
+    slot_ids: list[str] = Field(default_factory=list, max_length=3)
+    note: str | None = None
+
+
+def _slot_view(s: dict) -> dict:
+    return {
+        "slot_id": s["slot_id"],
+        "start_at": s["start_at"],
+        "when": when(s["start_at"]),
+        "mode": s["mode"],
+        "provider": s["provider"],
+        "own_doctor": s.get("own_doctor", False),
+        "within_target": s.get("within_target", True),
+    }
+
+
+def _current_appointment(state: TurnState) -> str | None:
+    """The patient's active appointment, from the case's audit events (booked or rescheduled, not cancelled)."""
+    appt = None
+    for e in (state.get("case") or {}).get("recent_events", []):
+        if e["type"] in ("appointment_booked", "appointment_rescheduled"):
+            appt = e["detail"].get("appointment_id")
+        elif e["type"] == "appointment_cancelled":
+            appt = None
+    return appt
+
+
+async def scheduler(state: TurnState, gw: Gateway) -> dict:
+    """Outreach (just offer options): deterministic, no LLM. A patient reply that needs judgment: an agent loop.
+
+    Each step the model picks one action; code runs it over MCP and feeds the result back. Code, not the model,
+    supplies case_id and idempotency keys, and only slots returned by find_slots in this turn that fit the
+    patient's request can be booked.
+    """
+    if state.get("trigger") != "inbound_reply":
+        return await stubs.scheduler(state, gw)  # cheapest path that does the job
+    intent = state.get("intent") or {}
+    details = intent.get("details") or {}
+    cid = state["case_id"]
+    try:
+        tools = await gw.list_tools("scheduling")
+    except Exception:  # noqa: BLE001 - discovery failing must not stop the turn: use the rule-based path
+        return await stubs.scheduler(state, gw)
+    seen: dict[str, dict] = {}  # slot_id -> slot, only what find_slots returned
+    history: list[dict] = []
+    appointment_id = _current_appointment(state)
+    base = {
+        "now": state["now"],
+        "patient_request": {"intent": intent.get("intent"), "accepts": intent.get("accepts"), **details},
+        "conversation": _conversation(state)[-4:],
+        "current_appointment_id": appointment_id,
+        "follow_up_by": (state["summary"].get("care_team") or {}).get("follow_up_by"),
+        "telehealth_ok": state["summary"]["contact"]["telehealth_ok"],
+        "tools": tools,
+    }
+    for _ in range(MAX_SCHEDULER_STEPS):
+        try:
+            a, _meta = await _ask("schedule_step", {**base, "steps_so_far": history}, SchedulerAction)
+        except LLMError:
+            return await stubs.scheduler(state, gw)  # graceful degradation
+        step = {"action": a.action, "tool": a.tool, "args": a.args, "thought": a.thought}
+        if a.action == "give_up":
+            break
+        if a.action == "offer":
+            picked = [seen[i] for i in a.slot_ids if i in seen and not slot_fits(seen[i]["start_at"], details)]
+            if picked:
+                return {
+                    "schedule": {
+                        "offered": [_slot_view(s) for s in picked],
+                        "appointment": None,
+                        "error": None,
+                        "note": a.note,
+                        "agent_steps": history + [step],
+                    }
+                }
+            step["result"] = {"error": "offer only slot_ids returned by find_slots that fit the request"}
+            history.append(step)
+            continue
+        # call_tool
+        allowed = {t["name"] for t in tools}
+        if a.tool not in allowed:
+            step["result"] = {"error": f"unknown tool {a.tool!r}; use one of {sorted(allowed)}"}
+            history.append(step)
+            continue
+        args = dict(a.args)
+        if a.tool in ("book_appointment", "reschedule_appointment"):
+            slot_id = args.get("slot_id") or args.get("new_slot_id")
+            if slot_id not in seen:
+                step["result"] = {"error": f"slot {slot_id} was not returned by find_slots in this conversation turn"}
+                history.append(step)
+                continue
+            if problems := slot_fits(seen[slot_id]["start_at"], details):
+                step["result"] = {"error": "slot contradicts what the patient asked: " + "; ".join(problems)}
+                history.append(step)
+                continue
+            if a.tool == "book_appointment":
+                args = {"case_id": cid, "slot_id": slot_id, "idempotency_key": f"{state['turn_key']}:book"}
+            else:
+                if not appointment_id:
+                    step["result"] = {"error": "no current appointment to reschedule; use book_appointment"}
+                    history.append(step)
+                    continue
+                args = {
+                    "appointment_id": appointment_id,
+                    "new_slot_id": slot_id,
+                    "idempotency_key": f"{state['turn_key']}:reschedule",
+                }
+        elif a.tool == "find_slots":
+            args = {**{k: v for k, v in args.items() if k != "case_id"}, "case_id": cid}
+        try:
+            result = await gw.call("scheduling", a.tool, **args)
+        except ToolFailed as e:
+            step["result"] = {"error": e.message}
+            history.append(step)
+            continue
+        if a.tool == "find_slots":
+            for s in result or []:
+                seen[s["slot_id"]] = s
+            step["result"] = [_slot_view(s) for s in result or []]
+        elif a.tool in ("book_appointment", "reschedule_appointment"):
+            appt = {**result, "when": when(result["start_at"])}
+            history.append({**step, "result": appt})
+            return {"schedule": {"offered": [], "appointment": appt, "error": None, "agent_steps": history}}
+        else:
+            step["result"] = result
+        history.append(step)
+    # ran out of steps or gave up: offer the best fitting slots seen, or fall back to the rule-based scheduler
+    fitting = [s for s in seen.values() if not slot_fits(s["start_at"], details)][:3]
+    if fitting:
+        return {
+            "schedule": {
+                "offered": [_slot_view(s) for s in fitting],
+                "appointment": None,
+                "error": None,
+                "note": None,
+                "agent_steps": history,
+            }
+        }
+    fallback = await stubs.scheduler(state, gw)
+    fallback["schedule"]["agent_steps"] = history
+    return fallback
+
+
+LLM_AGENTS = {
+    "reply_interpreter": reply_interpreter,
+    "care_planner": care_planner,
+    "message_writer": message_writer,
+    "scheduler": scheduler,
+}
