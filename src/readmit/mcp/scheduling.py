@@ -29,6 +29,12 @@ def get_current_time() -> str:
 
 
 @mcp.tool(annotations=READ_ONLY)
+def get_appointment(case_id: CaseId) -> dict | None:
+    """The patient's next booked visit (time, visit type, doctor), or null if none."""
+    return call(store.upcoming_appointment, case_id)
+
+
+@mcp.tool(annotations=READ_ONLY)
 def find_slots(
     case_id: CaseId,
     earliest: Annotated[str | None, Field(description="Earliest start, ISO datetime, e.g. 2026-09-15T00:00")] = None,

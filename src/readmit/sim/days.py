@@ -5,9 +5,11 @@
 
 Each simulated hour:
   1. messages held for quiet hours whose time has come are sent
-  2. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night)
-  3. in outreach hours (9 AM to 7 PM), every case whose next action is due gets one outreach turn
-  4. every message delivered this hour is shown to its scripted patient, who may schedule a reply
+  2. visits that ended an hour ago are marked attended or no-show (seeded, by persona)
+  3. at 7 AM the clinic cancels a few upcoming visits (doctor out, schedule changes)
+  4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night)
+  5. in outreach hours (9 AM to 7 PM): day-before reminders, then one outreach turn per due case
+  6. every message delivered this hour is shown to its scripted patient, who may schedule a reply
 Prints a summary per simulated day and, at the end, how each persona's cases ended.
 """
 
@@ -20,9 +22,10 @@ from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.agents.graph import run_turn
 from readmit.outreach import cadence, store
-from readmit.sim.patients import Patient, Reply, respond
+from readmit.sim.patients import Patient, Reply, attends, respond, seeded
 
 HOUR = timedelta(hours=1)
+CLINIC_CANCEL_RATE = 0.03  # chance per upcoming visit, checked each morning
 DELIVERED = ("sent", "delivered", "queued")
 
 
@@ -63,6 +66,8 @@ async def simulate(
     max_cases: int | None = None,
     personas: dict[str, str] | None = None,
     seed: int = 7,
+    no_show: dict[str, float] | None = None,
+    cancel_rate: float = CLINIC_CANCEL_RATE,
 ) -> list[dict]:
     """Advance the clock hour by hour for `days` days. Returns one summary row per simulated day."""
     t = store.now().replace(minute=0, second=0, microsecond=0)
@@ -75,12 +80,25 @@ async def simulate(
     while t < end:
         store.set_now(t)
         day["held_sent"] += store.deliver_due()
+        for v in store.visits_to_settle():
+            persona = patients[v["case_id"]].persona if v["case_id"] in patients else "engaged"
+            came = attends(persona, f"{v['case_id']}|{v['start_at']}", seed, (no_show or {}).get(persona))
+            store.record_visit(v["appointment_id"], came)
+            day["visit_attended" if came else "visit_no_show"] += 1
+        if t.hour == 7:
+            for a in upcoming_visits():
+                if seeded(seed, "clinic", a["case_id"], a["start_at"], t.date()).random() < cancel_rate:
+                    store.clinic_cancel(a["appointment_id"], "doctor unavailable")
+                    day["clinic_cancelled"] += 1
         for r in sorted((r for r in pending if r.due_at <= t), key=lambda r: r.due_at):
             pending.remove(r)
             store.record_inbound(r.case_id, r.channel, r.text)
             s = await run_turn(gateway, r.case_id, "inbound_reply", r.text, r.channel, agents)
             day["reply:" + ((s.get("outcome") or {}).get("action") or "skipped")] += 1
         if cadence.in_outreach_hours(t):
+            for r in store.reminders_due():
+                s = await run_turn(gateway, r["case_id"], "reminder", agents=agents)
+                day[(s.get("outcome") or {}).get("action") or "skipped"] += 1
             due = store.due_cases()
             for c in due[:max_cases] if max_cases else due:
                 s = await run_turn(gateway, c["case_id"], "outreach_due", agents=agents)
@@ -94,6 +112,17 @@ async def simulate(
             daily.append({"day": day_start.date().isoformat(), **day})
             day, day_start = Counter(), t
     return daily
+
+
+def upcoming_visits() -> list[dict]:
+    """Booked visits still ahead: the clinic can cancel any of them, even the same morning."""
+    with db.transaction() as c:
+        return db.rows(
+            c,
+            """select appointment_id, case_id, start_at from outreach.appointments
+               where status = 'booked' and start_at > :t order by start_at, case_id""",
+            t=store.now(c),
+        )
 
 
 def outcomes_by_persona(personas: dict[str, str] | None = None) -> dict[str, Counter]:

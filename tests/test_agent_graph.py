@@ -256,3 +256,26 @@ def test_an_emergency_while_a_nurse_has_the_case_still_gets_911():
 def test_paused_case_gets_no_outreach_turns():
     turn("C2", "can I talk to a nurse?", agents=reads_as("wants_human"))
     assert turn("C2")["skip"] == "case is escalated"
+
+
+# ------------------------------------------------------------------ appointment lifecycle
+def test_reminder_names_the_time_type_and_doctor_once():
+    a = store.book_appointment("C1", "S2", "kr1")
+    store.set_now(datetime(2026, 9, 10, 9, 0))
+    for _ in range(2):
+        s = asyncio.run(run_turn(Gateway.in_memory(), "C1", "reminder"))
+    assert s["path"] == ["load_context", "remind"] and s["outcome"]["action"] == "reminded"
+    [msg] = outbound("C1")
+    assert "Fri Sep 11, 9:00 AM" in msg["body"] and "clinic visit" in msg["body"] and "Dr. Test" in msg["body"]
+    assert "Maria" in msg["body"] and a["appointment_id"]
+
+
+def test_no_show_gets_a_no_blame_rebooking_offer_and_a_fresh_cadence():
+    turn("C1")
+    turn("C1", "the first one works", channel="email")
+    appt = store.upcoming_appointment("C1")
+    store.set_now(datetime(2026, 9, 10, 10, 0))
+    store.record_visit(appt["appointment_id"], attended=False)
+    s = turn("C1")
+    assert s["cadence"]["attempt"] == 1  # the offers before the no-show don't count
+    assert "missed you" in outbound("C1")[-1]["body"]

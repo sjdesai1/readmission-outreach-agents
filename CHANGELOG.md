@@ -15,6 +15,10 @@ each minor version is a finished milestone.
   symptomatic, opt out, no ride, injection attempt, abusive, Spanish speaker) replies with a fixed script and
   seeded timing; phone patients give their year of birth when asked; the run ends with outcomes per persona
 - Rule-based interpreter recognizes symptoms, medical questions, barriers, requests for a nurse and Spanish yes
+- Milestone 4 step 3: appointment lifecycle. Day-before reminders (fixed template: time, visit type, doctor;
+  one per visit); visits marked attended (case completed) or no-show (seeded per persona); the clinic cancels
+  some visits. No-shows and clinic cancellations restart outreach with a fresh cadence and a rebooking offer
+  (writer v8: no blame after a no-show, an apology after a clinic cancellation)
 
 ### Fixed
 - `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then

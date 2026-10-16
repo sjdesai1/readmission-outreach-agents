@@ -4,7 +4,7 @@ import operator
 from datetime import datetime
 from typing import Annotated, Literal, TypedDict
 
-Trigger = Literal["outreach_due", "inbound_reply"]
+Trigger = Literal["outreach_due", "inbound_reply", "reminder"]
 MAX_REVISIONS = 1  # a draft gets one rewrite; failing again goes to a nurse
 DAY_KEYS = ("preferred_days",)
 TIME_KEYS = ("part_of_day", "earliest_time", "latest_time")

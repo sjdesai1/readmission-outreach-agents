@@ -306,7 +306,13 @@ def book_appointment(case_id: str, slot_id: str, idempotency_key: str) -> dict:
             link=link,
             t=t,
         )
-        db.rows(c, "update outreach.cases set status = 'booked', updated_at = :t where case_id = :id", t=t, id=case_id)
+        db.rows(
+            c,
+            """update outreach.cases set status = 'booked', rebook_reason = null, updated_at = :t
+               where case_id = :id""",
+            t=t,
+            id=case_id,
+        )
         log_event(
             c,
             case_id,
@@ -400,6 +406,137 @@ def cancel_appointment(appointment_id: str, reason: str) -> dict:
         )
         log_event(c, appt["case_id"], "appointment_cancelled", {"appointment_id": appointment_id, "reason": reason})
     return _appt_view(appt)
+
+
+# ------------------------------------------------------------------ appointment lifecycle
+REMIND_WITHIN = timedelta(hours=26)  # remind the day before
+REBOOK_REASONS = ("no_show", "clinic_cancelled")
+
+
+def upcoming_appointment(case_id: str) -> dict | None:
+    """The case's next booked visit, with the doctor's name (for reminders)."""
+    with db.transaction() as c:
+        a = db.one(
+            c,
+            """select a.*, p.name as provider from outreach.appointments a
+               join outreach.providers p using (provider_id)
+               where a.case_id = :id and a.status = 'booked' and a.start_at > :t order by a.start_at limit 1""",
+            id=case_id,
+            t=now(c),
+        )
+    return {**_appt_view(a), "provider": a["provider"]} if a else None
+
+
+def reminders_due() -> list[dict]:
+    """Booked visits starting within 26h (but not within 2h) that haven't had a reminder. Visits booked in the
+    last 12h are skipped: the confirmation was the reminder. Used by the sequencer, not agents."""
+    with db.transaction() as c:
+        t = now(c)
+        return db.rows(
+            c,
+            """select a.case_id, a.appointment_id from outreach.appointments a
+               join outreach.cases k using (case_id)
+               where a.status = 'booked' and a.start_at > :soon and a.start_at <= :horizon
+                 and a.created_at <= :settled and k.status = 'booked'
+                 and not exists (select 1 from outreach.messages m
+                                 where m.idempotency_key = a.appointment_id || :suffix)
+               order by a.start_at""",
+            soon=t + MIN_LEAD,
+            horizon=t + REMIND_WITHIN,
+            settled=t - timedelta(hours=12),
+            suffix=":reminder",  # passed as a value: ":name" inside SQL text is read as a parameter
+        )
+
+
+def visits_to_settle() -> list[dict]:
+    """Booked visits that ended over an hour ago: the clinic records whether the patient came."""
+    with db.transaction() as c:
+        return db.rows(
+            c,
+            """select appointment_id, case_id, patient_id, start_at from outreach.appointments
+               where status = 'booked' and start_at + interval '1 hour' <= :t order by start_at, case_id""",
+            t=now(c),
+        )
+
+
+def _needs_rebooking(c, case_id: str, reason: str, t) -> None:
+    db.rows(
+        c,
+        """update outreach.cases set status = :s, rebook_reason = :r, rebook_at = :t, next_action_at = :t,
+                  updated_at = :t
+           where case_id = :id and status <> all(:closed)""",
+        s="no_show" if reason == "no_show" else "awaiting_reply",
+        r=reason,
+        t=t,
+        id=case_id,
+        closed=list(CLOSED_STATUSES),
+    )
+
+
+def record_visit(appointment_id: str, attended: bool) -> dict:
+    """The clinic marks a visit attended (case completed) or missed (outreach restarts to rebook)."""
+    with db.transaction() as c:
+        a = db.one(c, "select * from outreach.appointments where appointment_id = :a for update", a=appointment_id)
+        if not a:
+            raise StoreError(f"appointment {appointment_id} not found")
+        if a["status"] != "booked":
+            return {**_appt_view(a), "note": f"already {a['status']}"}
+        t = now(c)
+        a = db.one(
+            c,
+            """update outreach.appointments set status = :s, updated_at = :t where appointment_id = :a
+               returning *""",
+            s="completed" if attended else "no_show",
+            t=t,
+            a=appointment_id,
+        )
+        if attended:
+            db.rows(
+                c,
+                """update outreach.cases set status = 'completed', closed_at = :t, close_reason = 'visit attended',
+                          next_action_at = null, updated_at = :t
+                   where case_id = :id and status <> all(:closed)""",
+                t=t,
+                id=a["case_id"],
+                closed=list(CLOSED_STATUSES),
+            )
+        else:
+            _needs_rebooking(c, a["case_id"], "no_show", t)
+        log_event(
+            c, a["case_id"], "visit_completed" if attended else "visit_no_show", {"appointment_id": appointment_id}
+        )
+    return _appt_view(a)
+
+
+def clinic_cancel(appointment_id: str, reason: str) -> dict:
+    """The clinic cancels a booked visit (doctor out, schedule change). The slot is blocked, not reopened, and
+    the patient is offered new times."""
+    with db.transaction() as c:
+        a = db.one(c, "select * from outreach.appointments where appointment_id = :a for update", a=appointment_id)
+        if not a or a["status"] != "booked":
+            raise StoreError(f"appointment {appointment_id} is not booked")
+        t = now(c)
+        db.rows(
+            c,
+            "update outreach.slots set status = 'held_other', patient_id = null, appointment_id = null "
+            "where slot_id = :s",
+            s=a["slot_id"],
+        )
+        a = db.one(
+            c,
+            """update outreach.appointments set status = 'cancelled', updated_at = :t where appointment_id = :a
+               returning *""",
+            t=t,
+            a=appointment_id,
+        )
+        _needs_rebooking(c, a["case_id"], "clinic_cancelled", t)
+        log_event(
+            c,
+            a["case_id"],
+            "appointment_cancelled",
+            {"appointment_id": appointment_id, "by": "clinic", "reason": reason},
+        )
+    return _appt_view(a)
 
 
 def _appt_view(a: dict) -> dict:

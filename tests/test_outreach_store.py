@@ -203,3 +203,38 @@ def test_setup_wipes_every_outreach_table_including_new_ones():
     with db.transaction() as c:
         for t in tables:
             assert db.one(c, f"select count(*) as n from outreach.{t}")["n"] == 0
+
+
+# ------------------------------------------------------------------ appointment lifecycle
+def test_attended_visit_completes_the_case():
+    a = store.book_appointment("C1", "S1", "kv1")
+    store.set_now(datetime(2026, 9, 10, 10, 0))
+    assert [v["appointment_id"] for v in store.visits_to_settle()] == [a["appointment_id"]]
+    store.record_visit(a["appointment_id"], attended=True)
+    assert store.get_case("C1")["status"] == "completed" and store.visits_to_settle() == []
+
+
+def test_no_show_restarts_outreach_to_rebook():
+    a = store.book_appointment("C1", "S1", "kv2")
+    store.set_now(datetime(2026, 9, 10, 10, 0))
+    store.record_visit(a["appointment_id"], attended=False)
+    case = store.get_case("C1")
+    assert case["status"] == "no_show" and case["rebook_reason"] == "no_show"
+    assert "C1" in [c["case_id"] for c in store.due_cases()]
+    store.book_appointment("C1", "S2", "kv3")
+    assert store.get_case("C1")["rebook_reason"] is None  # cleared once rebooked
+
+
+def test_clinic_cancel_blocks_the_slot_and_asks_to_rebook():
+    a = store.book_appointment("C1", "S2", "kv4")
+    store.clinic_cancel(a["appointment_id"], "doctor out")
+    case = store.get_case("C1")
+    assert case["status"] == "awaiting_reply" and case["rebook_reason"] == "clinic_cancelled"
+    assert "S2" not in [s["slot_id"] for s in store.find_slots("C1", limit=10)]  # not reopened
+
+
+def test_reminder_due_the_day_before_once():
+    a = store.book_appointment("C1", "S2", "kv5")  # Fri Sep 11 9:00, booked Wed 9:00
+    assert store.reminders_due() == []  # more than 26h away
+    store.set_now(datetime(2026, 9, 10, 9, 0))
+    assert [r["appointment_id"] for r in store.reminders_due()] == [a["appointment_id"]]

@@ -113,8 +113,14 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         body = f"Hi {name}, your follow-up visit is booked for {a['when']} ({how(a['mode'])})."
     elif sched.get("offered"):
         options = "; ".join(f"{i}) {s['when']} ({how(s['mode'])})" for i, s in enumerate(sched["offered"], 1))
+        opening = {
+            "no_show": "We missed you at your visit, and that's okay. Let's find a new time.",
+            "clinic_cancelled": "We're sorry: the clinic had to cancel your visit. Let's find a new time.",
+        }.get((state.get("case") or {}).get("rebook_reason"))
         body = (
-            f"Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
+            f"Hi {name}, {opening[0].lower() + opening[1:]} Open times: {options}. Reply with the number that works."
+            if opening
+            else f"Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
             f"after your hospital stay. Open times: {options}. Reply with the number that works for you."
         )
     elif intent == "channel_change":
