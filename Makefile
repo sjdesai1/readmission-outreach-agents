@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn simulate
+        outreach-setup mcp-logs inspector turn simulate nurse
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -94,3 +94,6 @@ turn:           ## one agent turn by hand: make turn c=C000856 at=2026-09-10T09:
 
 simulate:       ## run outreach over simulated days: make simulate days=14 (llm=1 for the real agents, cases=5 to cap)
 	uv run python -m readmit.sim.days --days $(or $(days),14) $(if $(llm),--llm) $(if $(cases),--max-cases $(cases))
+
+nurse:          ## nurse queue screen at http://localhost:8501 (first time: uv sync --extra dev --extra ui)
+	uv run --extra ui streamlit run src/readmit/nurse/app.py

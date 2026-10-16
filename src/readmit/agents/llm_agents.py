@@ -114,10 +114,13 @@ async def _ask(task: str, user: dict, schema: type[BaseModel]):
 
 
 def _conversation(state: TurnState) -> list[dict]:
-    """Recent messages, already pseudonymized by load_context."""
+    """Recent messages, already pseudonymized by load_context. Nurse messages are labeled, so the agents know
+    what a nurse already told the patient and never contradict or repeat it."""
     return [
         {
-            "from": "care team" if m["direction"] == "outbound" else "patient",
+            "from": {"nurse": "nurse", "patient": "patient"}.get(
+                m.get("author") or ("patient" if m["direction"] == "inbound" else "ai"), "care team"
+            ),
             "channel": m["channel"],
             "at": m["at"][:16],
             "text": m["body"],

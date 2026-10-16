@@ -8,7 +8,8 @@ Each simulated hour:
   2. visits that ended an hour ago are marked attended or no-show (seeded, by persona); stays whose readmission
      date has come get their 30-day outcome (sim/outcomes.py: a completed visit lowers the chance)
   3. at 7 AM the clinic cancels a few upcoming visits (doctor out, schedule changes)
-  4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night)
+  4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night);
+     simulated nurses work the queue (urgent any hour, routine on weekday shifts) and hand cases back
   5. in outreach hours (9 AM to 7 PM): day-before reminders, then one outreach turn per due case
   6. every message delivered this hour reaches its scripted patient (or bounces, if that contact is wrong),
      who may schedule a reply
@@ -24,6 +25,7 @@ from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.agents.graph import run_turn
 from readmit.outreach import cadence, store
+from readmit.sim import nurses as sim_nurses
 from readmit.sim import outcomes as world_outcomes
 from readmit.sim.outcomes import Outcome
 from readmit.sim.patients import Patient, Reply, attends, bad_contacts, respond, seeded
@@ -85,6 +87,7 @@ async def simulate(
     cancel_rate: float = CLINIC_CANCEL_RATE,
     bad: dict[str, tuple[str, ...]] | None = None,
     outcomes: dict[str, Outcome] | None = None,
+    nurses: bool = True,
 ) -> list[dict]:
     """Advance the clock hour by hour for `days` days. Returns one summary row per simulated day."""
     t = store.now().replace(minute=0, second=0, microsecond=0)
@@ -122,6 +125,8 @@ async def simulate(
             store.record_inbound(r.case_id, r.channel, r.text)
             s = await run_turn(gateway, r.case_id, "inbound_reply", r.text, r.channel, agents)
             day["reply:" + ((s.get("outcome") or {}).get("action") or "skipped")] += 1
+        if nurses:
+            day["nurse_resolved"] += sim_nurses.work(t)
         if cadence.in_outreach_hours(t):
             for r in store.reminders_due():
                 s = await run_turn(gateway, r["case_id"], "reminder", agents=agents)

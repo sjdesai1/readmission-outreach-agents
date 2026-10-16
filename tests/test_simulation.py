@@ -61,7 +61,9 @@ def test_engaged_patient_books_and_opt_out_stops():
 
 
 def test_symptomatic_patient_goes_to_a_nurse_fast():
-    run(2, C1="silent", C2="symptomatic")
+    asyncio.run(
+        simulate(Gateway.in_memory(), days=2, personas={"C1": "silent", "C2": "symptomatic"}, bad={}, nurses=False)
+    )
     assert store.get_case("C2")["status"] == "escalated"
     [task] = store.list_nurse_tasks()
     assert task["kind"] == "symptom" and task["priority"] == "urgent"
@@ -94,7 +96,8 @@ def test_clinic_cancellation_is_apologized_for():
 # ------------------------------------------------------------------ delivery failures and readmission
 def test_bounced_email_with_no_other_channel_goes_to_a_nurse():
     personas = {"C1": "engaged", "C2": "silent"}
-    asyncio.run(simulate(Gateway.in_memory(), days=1, personas=personas, bad={"C1": ("email",)}, cancel_rate=0.0))
+    run_with = {"bad": {"C1": ("email",)}, "cancel_rate": 0.0, "nurses": False}
+    asyncio.run(simulate(Gateway.in_memory(), days=1, personas=personas, **run_with))
     assert store.patient_summary("C1")["contact"]["undeliverable"] == ["email"]
     assert store.get_case("C1")["status"] == "escalated"  # nobody can reach her by message: a nurse calls
 
@@ -131,3 +134,22 @@ def test_an_attended_visit_prevents_the_readmission_it_would_have_had():
     r = report()
     assert r["outreach"] == (0.5, 2) and r["holdout"] == (1.0, 1) and r["attended"] == (0.0, 1)
     assert abs(r["true_effect"] - (0.9 - 0.45) / 2) < 1e-9  # only C1 was treated
+
+
+# ------------------------------------------------------------------ simulated nurses
+def test_nurse_calls_the_symptomatic_patient_hands_back_and_the_visit_gets_booked():
+    personas = {"C1": "silent", "C2": "symptomatic"}
+    asyncio.run(simulate(Gateway.in_memory(), days=2, personas=personas, bad={}, cancel_rate=0.0))
+    [task] = store.list_nurse_tasks("done")
+    assert task["kind"] == "symptom" and store.list_nurse_tasks() == []
+    authors = [m["author"] for m in store.get_thread("C2", limit=50)]
+    assert "nurse" in authors and authors.index("nurse") < len(authors) - 1  # the AI picked up after the nurse
+    assert store.get_case("C2")["status"] in ("booked", "completed")  # booked, and may already have come in
+
+
+def test_patient_with_no_working_channel_is_closed_by_the_nurse():
+    personas = {"C1": "engaged", "C2": "silent"}
+    run_with = {"bad": {"C1": ("email",)}, "cancel_rate": 0.0}
+    asyncio.run(simulate(Gateway.in_memory(), days=1, personas=personas, **run_with))
+    case = store.get_case("C1")
+    assert case["status"] == "closed" and case["close_reason"] == "nurse handling directly"

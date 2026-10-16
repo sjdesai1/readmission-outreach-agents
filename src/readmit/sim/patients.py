@@ -44,6 +44,8 @@ REBOOK_LINE = {
     "no_ride": "The first one is fine.",
     "injection_attempt": "Ok, the first one.",
     "spanish_speaker": "Sí, la primera.",
+    "med_question": "Thanks. The first one works.",  # after the nurse answered their question
+    "symptomatic": "I'm feeling better. The first one works.",  # after the nurse checked on them
 }
 MAX_REBOOK_REPLIES = 2
 

@@ -152,3 +152,6 @@ create table if not exists outreach.case_barriers (
     at      timestamp not null,
     primary key (case_id, barrier)
 );
+
+-- Milestone 4 step 6: who wrote each message (ai, nurse, patient), so nurse and AI can share one thread.
+alter table outreach.messages add column if not exists author text not null default 'ai';

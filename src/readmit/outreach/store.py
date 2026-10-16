@@ -675,10 +675,19 @@ def _next_morning(t: datetime) -> datetime:
 
 
 def send_message(
-    case_id: str, channel: str, body: str, idempotency_key: str, subject: str | None = None, priority: str = "normal"
+    case_id: str,
+    channel: str,
+    body: str,
+    idempotency_key: str,
+    subject: str | None = None,
+    priority: str = "normal",
+    author: str = "ai",
 ) -> dict:
     """Send through one channel. Refused unless the patient opted into it. Contact details stay server-side.
-    During quiet hours a normal message is held and delivered at 8 AM; safety messages go out immediately."""
+    During quiet hours a normal message is held and delivered at 8 AM; safety messages go out immediately.
+    author: 'ai' for the agents (the only value the MCP tool can send), 'nurse' from the nurse console."""
+    if author not in ("ai", "nurse"):
+        raise StoreError("author must be 'ai' or 'nurse'")
     if channel not in CHANNELS:
         raise StoreError(f"channel must be one of {CHANNELS}")
     if priority not in PRIORITIES:
@@ -718,8 +727,10 @@ def send_message(
         msg = db.one(
             c,
             """insert into outreach.messages (message_id, idempotency_key, case_id, patient_id, direction,
-                               channel, subject, body, status, created_at, deliver_at)
-                           values (:m, :k, :case_id, :p, 'outbound', :ch, :subj, :body, :status, :t, :d) returning *""",
+                               channel, subject, body, status, created_at, deliver_at, author)
+                           values (:m, :k, :case_id, :p, 'outbound', :ch, :subj, :body, :status, :t, :d, :a)
+                           returning *""",
+            a=author,
             m=_id("msg"),
             k=idempotency_key,
             case_id=case_id,
@@ -753,8 +764,8 @@ def record_inbound(case_id: str, channel: str, body: str) -> dict:
         msg = db.one(
             c,
             """insert into outreach.messages (message_id, case_id, patient_id, direction, channel, body,
-                               status, created_at)
-                           values (:m, :case_id, :p, 'inbound', :ch, :body, 'received', :t) returning *""",
+                               status, created_at, author)
+                           values (:m, :case_id, :p, 'inbound', :ch, :body, 'received', :t, 'patient') returning *""",
             m=_id("msg"),
             case_id=case_id,
             p=case["patient_id"],
@@ -788,6 +799,7 @@ def _msg_view(m: dict) -> dict:
         "body": m["body"],
         "status": m["status"],
         "at": str(m["created_at"]),
+        "author": m.get("author") or ("patient" if m["direction"] == "inbound" else "ai"),
     }
     if m.get("deliver_at"):
         view["deliver_at"] = str(m["deliver_at"])
@@ -1075,9 +1087,9 @@ def resolve_nurse_task(task_id: str, resolution: str, hand_back: bool = False) -
                 t=t,
             )
             back_to = "booked" if upcoming else "awaiting_reply"
-            db.rows(
+            db.rows(  # the outreach cadence restarts from the hand-back (rebook_at marks where it counts from)
                 c,
-                """update outreach.cases set status = :s, updated_at = :t,
+                """update outreach.cases set status = :s, updated_at = :t, rebook_at = :t,
                           next_action_at = case when :s = 'booked' then null else :t end
                    where case_id = :id and status = 'escalated'""",
                 s=back_to,
