@@ -191,3 +191,15 @@ def test_emergencies_are_due_now_and_top_the_queue():
     emergency = store.create_nurse_task("C2", "emergency", "urgent", "chest pain", "k6")
     assert emergency["due_at"].startswith("2026-09-09 09:00")  # now, not within the hour
     assert [t["task_id"] for t in store.list_nurse_tasks()][:2] == [emergency["task_id"], symptom["task_id"]]
+
+
+def test_setup_wipes_every_outreach_table_including_new_ones():
+    from readmit.outreach.setup import wipe_outreach
+
+    store.create_nurse_task("C1", "callback", "routine", "wants a call", "k7")
+    store.remember_preference("C1", "part_of_day", "afternoon", "I work mornings")
+    tables = wipe_outreach()
+    assert {"nurse_tasks", "patient_memory", "cases", "messages"} <= set(tables)
+    with db.transaction() as c:
+        for t in tables:
+            assert db.one(c, f"select count(*) as n from outreach.{t}")["n"] == 0

@@ -95,6 +95,22 @@ def build_cases() -> pd.DataFrame:
     )  # closed_at / close_reason left out: all-empty columns get typed as text and Postgres rejects them
 
 
+def wipe_outreach() -> list[str]:
+    """Empty EVERY table in the outreach schema, found at run time, so a table added later can't be missed.
+    (A hand-written list once left nurse tasks behind; a replayed idempotency key then returned a stale task.)"""
+    with db.engine().begin() as c:
+        tables = [
+            r[0]
+            for r in c.exec_driver_sql(
+                "select table_name from information_schema.tables "
+                "where table_schema = 'outreach' and table_type = 'BASE TABLE' order by table_name"
+            )
+        ]
+        if tables:
+            c.exec_driver_sql("truncate " + ", ".join(f"outreach.{t}" for t in tables))
+    return tables
+
+
 def main():
     db.ensure_schemas()
     with db.engine().begin() as c:  # migrations first: new columns must exist before anything is read
@@ -102,11 +118,7 @@ def main():
     # build everything BEFORE wiping: if building fails, the existing outreach data is left untouched
     cases = build_cases()
     slots = calendar()
-    with db.engine().begin() as c:
-        c.exec_driver_sql(
-            "truncate outreach.events, outreach.messages, outreach.appointments, outreach.referrals, "
-            "outreach.cases, outreach.slots, outreach.providers, outreach.sim_clock"
-        )
+    wipe_outreach()
 
     db.write(
         pd.DataFrame([{"provider_id": p, "name": n, "role": r} for p, n, r, _ in PROVIDERS]),

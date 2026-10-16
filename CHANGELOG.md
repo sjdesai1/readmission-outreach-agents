@@ -17,6 +17,8 @@ each minor version is a finished milestone.
 - Rule-based interpreter recognizes symptoms, medical questions, barriers, requests for a nurse and Spanish yes
 
 ### Fixed
+- `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then
+  returned a stale nurse task and the case was never paused. Setup now empties every outreach table
 - Flaky "too many clients" test error: the test fixture now closes its database connections after each test
 
 ## [0.3.0] - Milestone 3
