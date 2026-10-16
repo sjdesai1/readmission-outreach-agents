@@ -16,7 +16,7 @@ SILENT = {"C1": "silent", "C2": "silent"}
 
 
 def run(days, **personas):
-    return asyncio.run(simulate(Gateway.in_memory(), days=days, personas=personas))
+    return asyncio.run(simulate(Gateway.in_memory(), days=days, personas=personas, cancel_rate=0.0))
 
 
 def outbound(case_id):
@@ -49,7 +49,7 @@ def test_booked_and_escalated_cases_are_not_outreach_due():
 
 
 def test_engaged_patient_books_and_opt_out_stops():
-    run(3, C1="engaged", C2="opt_out")
+    run(1, C1="engaged", C2="opt_out")  # one day: booked, the visit hasn't happened yet
     assert store.get_case("C1")["status"] == "booked"
     assert store.get_case("C2")["status"] == "opted_out"
     assert outcomes_by_persona({"C1": "engaged", "C2": "opt_out"}) == {
@@ -66,6 +66,20 @@ def test_symptomatic_patient_goes_to_a_nurse_fast():
 
 
 def test_patients_never_answer_a_confirmation():
-    run(4, C1="engaged", C2="silent")
+    run(1, C1="engaged", C2="silent")
     inbound = [m for m in store.get_thread("C1") if m["direction"] == "inbound"]
     assert len(inbound) == 1  # answered the offer, not the "you're booked" message
+
+
+def test_no_show_patient_is_offered_new_times_and_rebooks():
+    personas = {"C1": "engaged", "C2": "silent"}
+    asyncio.run(simulate(Gateway.in_memory(), days=3, personas=personas, no_show={"engaged": 1.0}, cancel_rate=0.0))
+    bodies = [m["body"] for m in outbound("C1")]
+    assert any("missed you" in b for b in bodies)
+    inbound = [m for m in store.get_thread("C1") if m["direction"] == "inbound"]
+    assert len(inbound) >= 2  # picked a time, missed it, picked again
+
+
+def test_clinic_cancellation_is_apologized_for():
+    asyncio.run(simulate(Gateway.in_memory(), days=2, personas={"C1": "engaged", "C2": "silent"}, cancel_rate=1.0))
+    assert any("clinic had to cancel" in m["body"] for m in outbound("C1"))

@@ -10,6 +10,7 @@ message came on. On a phone call that asks for the year of birth, they give it f
 
 import hashlib
 import random
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -31,6 +32,18 @@ SCRIPTS: dict[str, tuple[tuple[float, float], list[str]]] = {
 }
 ID_ASKS = ("year of birth", "año de nacimiento")
 
+# chance of missing a booked visit, by persona (no ride and busy schedules miss more)
+NO_SHOW = {"busy": 0.30, "no_ride": 0.35, "spanish_speaker": 0.15, "injection_attempt": 0.10, "engaged": 0.08}
+# what a patient who already finished their script says when offered new times (after a no-show or cancellation)
+REBOOK_LINE = {
+    "engaged": "The first one works.",
+    "busy": "The first one works.",
+    "no_ride": "The first one is fine.",
+    "injection_attempt": "Ok, the first one.",
+    "spanish_speaker": "Sí, la primera.",
+}
+MAX_REBOOK_REPLIES = 2
+
 
 @dataclass
 class Patient:
@@ -38,6 +51,7 @@ class Patient:
     persona: str
     birth_year: int
     replies_sent: int = 0
+    rebook_replies: int = 0
 
 
 @dataclass
@@ -48,12 +62,23 @@ class Reply:
     text: str
 
 
+def is_offer(body: str) -> bool:
+    """The message lists numbered options."""
+    return bool(re.search(r"(\b1\)|\b1\.\s|option 1|opción 1)", body.lower()))
+
+
 def wants_answer(body: str) -> bool:
     b = body.lower()
     return "?" in b or "reply" in b or "responda" in b
 
 
-def _rng(seed: int, *parts) -> random.Random:
+def attends(persona: str, visit_key: str, seed: int = 7, no_show: float | None = None) -> bool:
+    """Does the patient show up? Seeded by case and visit time (ids are random), so reruns give the same no-shows."""
+    p = NO_SHOW.get(persona, 0.15) if no_show is None else no_show
+    return seeded(seed, "visit", visit_key).random() >= p
+
+
+def seeded(seed: int, *parts) -> random.Random:
     digest = hashlib.sha256("|".join(map(str, (seed, *parts))).encode()).hexdigest()
     return random.Random(int(digest[:16], 16))
 
@@ -63,12 +88,16 @@ def respond(patient: Patient, message: dict, sent_at, seed: int = 7) -> Reply | 
     if not wants_answer(message["body"]):
         return None
     (lo, hi), lines = SCRIPTS.get(patient.persona, SCRIPTS["engaged"])
-    if patient.replies_sent >= len(lines):
+    if patient.replies_sent < len(lines):
+        text = lines[patient.replies_sent]
+    elif patient.persona in REBOOK_LINE and patient.rebook_replies < MAX_REBOOK_REPLIES and is_offer(message["body"]):
+        text = REBOOK_LINE[patient.persona]  # offered new times later on: picks one again
+        patient.rebook_replies += 1
+    else:
         return None  # script finished: they've said what they had to say
-    text = lines[patient.replies_sent]
     asked_id = message["channel"] == "phone" and any(a in message["body"].lower() for a in ID_ASKS)
     if asked_id and text != "STOP":  # STOP must stay the whole message
         text = f"{patient.birth_year}. {text}"
-    hours = _rng(seed, patient.case_id, patient.replies_sent).uniform(lo, hi)
+    hours = seeded(seed, patient.case_id, patient.replies_sent, patient.rebook_replies).uniform(lo, hi)
     patient.replies_sent += 1
     return Reply(sent_at + timedelta(hours=hours), patient.case_id, message["channel"], text)

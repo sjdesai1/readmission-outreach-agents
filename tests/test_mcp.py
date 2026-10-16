@@ -35,6 +35,7 @@ def test_each_server_exposes_only_its_own_tools():
         "book_appointment",
         "cancel_appointment",
         "find_slots",
+        "get_appointment",
         "get_current_time",
         "reschedule_appointment",
     ]

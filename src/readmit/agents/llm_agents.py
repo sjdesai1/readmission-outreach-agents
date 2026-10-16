@@ -25,6 +25,7 @@ from readmit.llm import LLMError, complete_json, load_prompt
 # write_message v5: never says visits or times are available unless offered slots are given.
 #               v6: a booking confirmation never asks the patient to confirm again; names the doctor.
 #               v7: follow-up attempts say so briefly; the last attempt is a phone call.
+#               v8: rebooking after a missed visit or a clinic cancellation.
 # review_message v2: doctor names, own doctor and the conversation are facts; "we'll remember" is expected.
 # schedule_step v2: standing preferences as filters, a mix of video and clinic when the patient has no preference.
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
@@ -32,7 +33,7 @@ from readmit.llm import LLMError, complete_json, load_prompt
 PROMPTS = {
     "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v7",
+    "write_message": "v8",
     "schedule_step": "v2",
     "review_message": "v2",
 }
@@ -216,7 +217,10 @@ def message_purpose(state: TurnState) -> str:
     if sched.get("appointment"):
         return "confirm_booking"
     if sched.get("offered"):
-        return "offer_slots"
+        rebook = (state.get("case") or {}).get("rebook_reason")
+        return {"no_show": "rebook_after_no_show", "clinic_cancelled": "rebook_after_clinic_cancel"}.get(
+            rebook, "offer_slots"
+        )
     return {
         "decline": "acknowledge_decline",
         "channel_change": "acknowledge_channel_change",

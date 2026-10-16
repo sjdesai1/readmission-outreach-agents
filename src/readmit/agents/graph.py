@@ -90,6 +90,8 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
         return {"now": now, "case": case, "skip": "case not open yet"}
     if state["trigger"] == "outreach_due" and case["status"] == "booked":
         return {"now": now, "case": case, "skip": "already booked"}
+    if state["trigger"] == "reminder" and case["status"] != "booked":
+        return {"now": now, "case": case, "skip": f"no reminder: case is {case['status']}"}
     # the patient's name never enters the state: agents, prompts and traces see {first_name} instead
     summary, name = pseudonymize_summary(await gw.call("patient_data", "get_patient_summary", case_id=cid))
     thread = [
@@ -98,7 +100,10 @@ async def load_context(state: TurnState, gw: Gateway) -> dict:
     ]
     step = None
     if state["trigger"] == "outreach_due":
-        step = cadence.next_attempt(cadence.unanswered(thread), summary["contact"]["allowed_channels"])
+        # after a no-show or a clinic cancellation the cadence starts again from that moment
+        since = case.get("rebook_at") or ""
+        recent = [m for m in thread if m["at"] >= since] if since else thread
+        step = cadence.next_attempt(cadence.unanswered(recent), summary["contact"]["allowed_channels"])
     older, recent = thread[:-RECENT], thread[-RECENT:]
     history = ""
     if older:
@@ -300,6 +305,47 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
     }
 
 
+REMINDER_MSG = {
+    "English": "Hi {first_name}, a reminder from your care team at Orchard Valley: your follow-up visit is "
+    "{when}, {how} with {doctor}. If you need to change it, just let us know.",
+    "Spanish": "Hola {first_name}, un recordatorio de su equipo de atención de Orchard Valley: su visita de "
+    "seguimiento es el {when}, {how} con {doctor}. Si necesita cambiarla, avísenos.",
+}
+HOW_ES = {"video visit": "visita por video", "clinic visit": "visita en la clínica"}
+
+
+async def remind(state: TurnState, gw: Gateway) -> dict:
+    """Day-before reminder: a fixed template with the real time, visit type and doctor. No LLM."""
+    cid = state["case_id"]
+    appt = await gw.call("scheduling", "get_appointment", case_id=cid)
+    if not appt:
+        return {"outcome": {"action": "no_reminder", "reason": "no upcoming visit"}}
+    contact = state["summary"]["contact"]
+    channel = contact["preferred_channel"] if contact["preferred_channel"] in contact["allowed_channels"] else None
+    channel = channel or (contact["allowed_channels"] or [None])[0]
+    if not channel:
+        return {"outcome": {"action": "no_reminder", "reason": "no consented channel"}}
+    lang = state["summary"]["patient"]["preferred_language"]
+    how_ = "video visit" if appt["mode"] == "telehealth" else "clinic visit"
+    name = (await gw.call("patient_data", "get_patient_summary", case_id=cid))["patient"]["first_name"]
+    body = REMINDER_MSG.get(lang, REMINDER_MSG["English"]).format(
+        first_name=name,
+        when=(when_es if lang == "Spanish" else when)(appt["start_at"]),
+        how=HOW_ES[how_] if lang == "Spanish" else how_,
+        doctor=appt["provider"],
+    )
+    msg = await gw.call(
+        "messaging",
+        "send_message",
+        case_id=cid,
+        channel=channel,
+        body=body,
+        subject="Reminder: your follow-up visit" if channel in ("email", "portal") else None,
+        idempotency_key=f"{appt['appointment_id']}:reminder",  # one reminder per visit, however often we run
+    )
+    return {"outcome": {"action": "reminded", "channel": channel, "message_id": msg["message_id"]}}
+
+
 async def close_unreachable(state: TurnState, gw: Gateway) -> dict:
     """The cadence ran out with no reply: close the case. A nurse can reopen it."""
     reason = state["cadence"]["reason"]
@@ -475,6 +521,8 @@ def after_context(state: TurnState) -> str:
         return END
     if (state.get("cadence") or {}).get("close"):
         return "close_unreachable"
+    if state["trigger"] == "reminder":
+        return "remind"
     return "input_guard" if state["trigger"] == "inbound_reply" else "care_planner"
 
 
@@ -575,6 +623,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         "remember": remember,
         "hold_for_nurse": hold_for_nurse,
         "close_unreachable": close_unreachable,
+        "remind": remind,
     }
     reviewer = agents["safety_reviewer"]
     agents = {**agents, "safety_reviewer": lambda s, gw: _reviewer_counted(reviewer, s, gw)}
@@ -590,8 +639,11 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     for name, fn in {**rules, **agents}.items():
         g.add_node(name, node(name, fn))
     g.add_edge(START, "load_context")
-    g.add_conditional_edges("load_context", after_context, ["input_guard", "care_planner", "close_unreachable", END])
+    g.add_conditional_edges(
+        "load_context", after_context, ["input_guard", "care_planner", "close_unreachable", "remind", END]
+    )
     g.add_edge("close_unreachable", END)
+    g.add_edge("remind", END)
     g.add_conditional_edges(
         "input_guard",
         after_guard,
