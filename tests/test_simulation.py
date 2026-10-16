@@ -9,6 +9,7 @@ from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.outreach import store
 from readmit.sim.days import outcomes_by_persona, simulate
+from readmit.sim.outcomes import Outcome, report
 
 pytestmark = pytest.mark.usefixtures("pg")
 
@@ -106,9 +107,27 @@ def test_wrong_number_switches_to_another_channel():
 
 def test_readmission_stops_outreach_and_frees_the_visit():
     personas = {"C1": "engaged", "C2": "silent"}
-    back = {"C1": datetime(2026, 9, 9, 22, 0)}  # booked during the day, readmitted that night
-    asyncio.run(simulate(Gateway.in_memory(), days=2, personas=personas, bad={}, readmit_at=back, cancel_rate=0.0))
+    sure = {"E1": Outcome("E1", "C1", p0=1.0, rr=0.0, u=0.5, readmit_at=datetime(2026, 9, 9, 22, 0))}
+    asyncio.run(simulate(Gateway.in_memory(), days=2, personas=personas, bad={}, outcomes=sure, cancel_rate=0.0))
     assert store.get_case("C1")["status"] == "readmitted"
     assert store.upcoming_appointment("C1") is None
     with db.transaction() as c:  # the slot went back to the clinic
         assert db.one(c, "select status from outreach.slots where slot_id = 'S1'")["status"] == "open"
+
+
+# ------------------------------------------------------------------ outcomes with a real outreach effect
+def test_an_attended_visit_prevents_the_readmission_it_would_have_had():
+    personas = {"C1": "engaged", "C2": "silent"}
+    later = datetime(2026, 9, 12, 12, 0)  # after the Thu Sep 10 visit
+    draws = {
+        "E1": Outcome("E1", "C1", p0=0.9, rr=0.5, u=0.6, readmit_at=later),  # 0.6 < 0.9 but not < 0.45
+        "E2": Outcome("E2", "C2", p0=0.9, rr=0.5, u=0.6, readmit_at=later),  # never came in: readmitted
+        "E9": Outcome("E9", None, p0=0.9, rr=0.5, u=0.6, readmit_at=later),  # holdout: usual care
+    }
+    run_with = {"no_show": {"engaged": 0.0}, "cancel_rate": 0.0, "bad": {}}
+    asyncio.run(simulate(Gateway.in_memory(), days=4, personas=personas, outcomes=draws, **run_with))
+    assert store.get_case("C1")["status"] == "completed"
+    assert store.get_case("C2")["status"] == "readmitted"
+    r = report()
+    assert r["outreach"] == (0.5, 2) and r["holdout"] == (1.0, 1) and r["attended"] == (0.0, 1)
+    assert abs(r["true_effect"] - (0.9 - 0.45) / 2) < 1e-9  # only C1 was treated

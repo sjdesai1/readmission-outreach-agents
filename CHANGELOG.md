@@ -25,6 +25,11 @@ each minor version is a finished milestone.
   patients mention ("no ride") are recorded with the model's barrier names; the planner sees them and the
   rule-based planner files a transport referral
 - Referrals are idempotent per case and type, not per turn (no duplicate ride referrals)
+- Milestone 4 step 5: 30-day outcomes with a real outreach effect. Each flagged live stay gets a true risk with
+  usual care, a heterogeneous reduction from a completed visit, and one seeded draw that defines both potential
+  outcomes. The scoring holdout (20%, no outreach) makes outreach vs holdout a randomized comparison; the run
+  reports it next to the biased attended-vs-not comparison and the true effect (truth.outcome_draws,
+  truth.outcome_results). Replaces the step 4 stand-in that only saw later admissions
 
 ### Fixed
 - `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then
