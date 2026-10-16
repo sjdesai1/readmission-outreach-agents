@@ -17,6 +17,7 @@ Rules enforced here, not in prompts (an agent can't talk its way around them):
 """
 
 import json
+import re
 import smtplib
 import uuid
 from datetime import datetime, timedelta
@@ -141,6 +142,8 @@ def patient_summary(case_id: str) -> dict:
         )
         pcp = db.one(c, "select name from outreach.providers where provider_id = :p", p=case.get("pcp_provider_id"))
         memory = db.rows(c, "select key, value from outreach.patient_memory where patient_id = :p", p=p["patient_id"])
+        bad = _bad_channels(c, p["patient_id"])
+        told = db.rows(c, "select barrier from outreach.case_barriers where case_id = :id order by at", id=case_id)
     channels = {
         "portal": bool(p["has_portal_account"] and p["portal_opt_in"]),
         "sms": bool(p["sms_opt_in"] and p["mobile_phone"]),
@@ -156,7 +159,8 @@ def patient_summary(case_id: str) -> dict:
             "preferred_language": p["preferred_language"],
         },
         "contact": {
-            "allowed_channels": [ch for ch, ok in channels.items() if ok],
+            "allowed_channels": [ch for ch, ok in channels.items() if ok and ch not in bad],
+            "undeliverable": sorted(bad),
             "preferred_channel": p["preferred_channel"],
             "contact_window": p["contact_window"],
             "telehealth_ok": bool(p["telehealth_opt_in"] and p["telehealth_capable"]),
@@ -180,7 +184,7 @@ def patient_summary(case_id: str) -> dict:
             "risk": score["risk"],
             "tier": score["tier"],
             "top_drivers": json.loads(score["top_drivers"]),
-            "barriers": json.loads(score["barriers"]),
+            "barriers": sorted({*json.loads(score["barriers"]), *(t["barrier"] for t in told)}),
         },
     }
 
@@ -408,6 +412,115 @@ def cancel_appointment(appointment_id: str, reason: str) -> dict:
     return _appt_view(appt)
 
 
+# ------------------------------------------------------------------ delivery failures, barriers, readmission
+SHARED_NUMBER = {"sms": ("sms", "phone"), "phone": ("sms", "phone"), "email": ("email",), "portal": ("portal",)}
+BARRIER_WORDS = {  # word starts (regex) in what a patient said -> the barrier name the model already uses
+    "transport_barrier": ("ride", r"car\b", "drive", r"bus\b", "transport"),
+    "cost_barrier": ("afford", "cost", "copay", "money", "insurance"),
+    "caregiving_barrier": ("childcare", "kids", "babysitter", "care for my"),
+    "work_schedule": ("work", "shift", "job", "trabajo"),
+}
+
+
+def _bad_channels(c, patient_id: str) -> dict[str, str]:
+    rows = db.rows(c, "select channel, reason from outreach.bad_contacts where patient_id = :p", p=patient_id)
+    return {r["channel"]: r["reason"] for r in rows}
+
+
+def delivery_failed(message_id: str, reason: str) -> dict:
+    """The carrier or mail server reported a failure (bounce, wrong number). The channel is marked undeliverable
+    for this patient (a wrong number breaks texts and calls alike) and the case is due again right away, so the
+    next attempt goes out on another channel."""
+    with db.transaction() as c:
+        m = db.one(c, "select * from outreach.messages where message_id = :m for update", m=message_id)
+        if not m:
+            raise StoreError(f"message {message_id} not found")
+        t = now(c)
+        db.rows(c, "update outreach.messages set status = 'failed' where message_id = :m", m=message_id)
+        for ch in SHARED_NUMBER[m["channel"]]:
+            db.rows(
+                c,
+                """insert into outreach.bad_contacts (patient_id, channel, reason, at) values (:p, :ch, :r, :t)
+                   on conflict (patient_id, channel) do nothing""",
+                p=m["patient_id"],
+                ch=ch,
+                r=reason,
+                t=t,
+            )
+        db.rows(
+            c,
+            """update outreach.cases set next_action_at = :t, updated_at = :t
+               where case_id = :id and status = 'awaiting_reply'""",
+            t=t,
+            id=m["case_id"],
+        )
+        log_event(
+            c, m["case_id"], "delivery_failed", {"message_id": message_id, "channel": m["channel"], "reason": reason}
+        )
+    return {"message_id": message_id, "status": "failed", "reason": reason}
+
+
+def barrier_name(text: str) -> str:
+    t = text.lower()
+    hit = (name for name, words in BARRIER_WORDS.items() if any(re.search(rf"\b{w}", t) for w in words))
+    return next(hit, "other_barrier")
+
+
+def record_barrier(case_id: str, detail: str, source: str) -> dict:
+    """A barrier the patient told us about ("no ride"), named the way the risk model names barriers, so the
+    planner sees it next to the ones extracted from the hospital notes."""
+    name = barrier_name(detail)
+    with db.transaction() as c:
+        _case(c, case_id, acting=True)
+        db.rows(
+            c,
+            """insert into outreach.case_barriers (case_id, barrier, detail, source, at)
+               values (:id, :b, :d, :s, :t) on conflict (case_id, barrier) do nothing""",
+            id=case_id,
+            b=name,
+            d=detail[:300],
+            s=source,
+            t=now(c),
+        )
+        log_event(c, case_id, "barrier_recorded", {"barrier": name, "source": source})
+    return {"barrier": name}
+
+
+def mark_readmitted(case_id: str, admitted_at) -> dict:
+    """The patient is back in the hospital. Outreach stops at once and upcoming visits are cancelled; a new case
+    opens after the new discharge. A case already closed keeps its status: the event is still logged, because
+    readmission after outreach is what the program is measured on."""
+    with db.transaction() as c:
+        case = _case(c, case_id, lock=True)
+        t = now(c)
+        for a in db.rows(
+            c,
+            "select appointment_id, slot_id from outreach.appointments where case_id = :id and status = 'booked'",
+            id=case_id,
+        ):
+            db.rows(
+                c,
+                "update outreach.slots set status = 'open', patient_id = null, appointment_id = null where slot_id = :s",
+                s=a["slot_id"],
+            )
+            db.rows(
+                c,
+                "update outreach.appointments set status = 'cancelled', updated_at = :t where appointment_id = :a",
+                t=t,
+                a=a["appointment_id"],
+            )
+        if case["status"] not in CLOSED_STATUSES:
+            db.rows(
+                c,
+                """update outreach.cases set status = 'readmitted', closed_at = :t, close_reason = 'readmitted',
+                          next_action_at = null, updated_at = :t where case_id = :id""",
+                t=t,
+                id=case_id,
+            )
+        log_event(c, case_id, "readmitted", {"admitted_at": str(admitted_at), "status_before": case["status"]})
+    return get_case(case_id, events=3)
+
+
 # ------------------------------------------------------------------ appointment lifecycle
 REMIND_WITHIN = timedelta(hours=26)  # remind the day before
 REBOOK_REASONS = ("no_show", "clinic_cancelled")
@@ -586,6 +699,11 @@ def send_message(
             "email": p["email_opt_in"] and p["email"],
             "phone": p["phone_opt_in"] and p["mobile_phone"],
         }
+        bad = _bad_channels(c, p["patient_id"])
+        if channel in bad:
+            raise StoreError(
+                f"messages by {channel} are not getting through ({bad[channel]}); use another consented channel"
+            )
         if not allowed[channel]:
             raise StoreError(
                 f"patient has not opted into {channel}; use one of "

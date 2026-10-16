@@ -32,6 +32,9 @@ SCRIPTS: dict[str, tuple[tuple[float, float], list[str]]] = {
 }
 ID_ASKS = ("year of birth", "año de nacimiento")
 
+# chance that a contact detail on file is wrong (real registration data has stale emails and numbers)
+BAD_EMAIL, BAD_NUMBER = 0.06, 0.04
+
 # chance of missing a booked visit, by persona (no ride and busy schedules miss more)
 NO_SHOW = {"busy": 0.30, "no_ride": 0.35, "spanish_speaker": 0.15, "injection_attempt": 0.10, "engaged": 0.08}
 # what a patient who already finished their script says when offered new times (after a no-show or cancellation)
@@ -52,6 +55,7 @@ class Patient:
     birth_year: int
     replies_sent: int = 0
     rebook_replies: int = 0
+    bad_channels: tuple[str, ...] = ()  # contact details on file that don't work (bounced email, wrong number)
 
 
 @dataclass
@@ -70,6 +74,16 @@ def is_offer(body: str) -> bool:
 def wants_answer(body: str) -> bool:
     b = body.lower()
     return "?" in b or "reply" in b or "responda" in b
+
+
+def bad_contacts(patient_id: str, seed: int = 7) -> tuple[str, ...]:
+    """Which of this patient's channels fail, seeded per patient: a wrong number breaks texts and calls."""
+    bad = []
+    if seeded(seed, "email", patient_id).random() < BAD_EMAIL:
+        bad.append("email")
+    if seeded(seed, "number", patient_id).random() < BAD_NUMBER:
+        bad += ["sms", "phone"]
+    return tuple(bad)
 
 
 def attends(persona: str, visit_key: str, seed: int = 7, no_show: float | None = None) -> bool:

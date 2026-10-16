@@ -45,6 +45,7 @@ def test_each_server_exposes_only_its_own_tools():
         "add_case_note",
         "create_nurse_task",
         "get_case",
+        "record_barrier",
         "set_preferred_channel",
         "update_case_status",
     ]

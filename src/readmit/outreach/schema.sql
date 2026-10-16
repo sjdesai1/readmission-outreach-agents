@@ -135,3 +135,20 @@ create table if not exists outreach.patient_memory (
 -- Milestone 4 step 3: why a booked patient needs a new visit, and since when (the cadence restarts from here).
 alter table outreach.cases add column if not exists rebook_reason text;  -- no_show | clinic_cancelled
 alter table outreach.cases add column if not exists rebook_at timestamp;
+
+-- Milestone 4 step 4: contact details that turned out to be wrong, and barriers patients told us about.
+create table if not exists outreach.bad_contacts (
+    patient_id text not null,
+    channel    text not null,
+    reason     text not null,
+    at         timestamp not null,
+    primary key (patient_id, channel)
+);
+create table if not exists outreach.case_barriers (
+    case_id text not null,
+    barrier text not null,
+    detail  text,
+    source  text not null,
+    at      timestamp not null,
+    primary key (case_id, barrier)
+);

@@ -279,3 +279,11 @@ def test_no_show_gets_a_no_blame_rebooking_offer_and_a_fresh_cadence():
     s = turn("C1")
     assert s["cadence"]["attempt"] == 1  # the offers before the no-show don't count
     assert "missed you" in outbound("C1")[-1]["body"]
+
+
+def test_a_barrier_in_a_reply_is_recorded_and_gets_a_ride_referral():
+    turn("C2")
+    s = turn("C2", "I don't have a ride to get there")
+    assert s["intent"]["intent"] == "barrier" and "transport_barrier" in s["summary"]["risk"]["barriers"]
+    assert s["plan"]["referrals_filed"] == ["transport"]
+    assert "ride" in outbound("C2")[-1]["body"]

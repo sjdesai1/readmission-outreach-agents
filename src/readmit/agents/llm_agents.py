@@ -200,7 +200,7 @@ async def care_planner(state: TurnState, gw: Gateway) -> dict:
                 case_id=state["case_id"],
                 referral_type=ref["type"],
                 reason=ref["reason"],
-                idempotency_key=f"{state['turn_key']}:ref:{ref['type']}",
+                idempotency_key=f"{state['case_id']}:ref:{ref['type']}",  # one referral per type per case
             )
             filed.append(ref["type"])
         except ToolFailed as e:
