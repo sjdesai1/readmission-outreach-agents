@@ -4,8 +4,9 @@
     python -m readmit.sim.days --days 3 --llm       # the real LLM agents (costs tokens, slower)
 
 Each simulated hour:
-  1. messages held for quiet hours whose time has come are sent; patients readmitted by now stop outreach
-  2. visits that ended an hour ago are marked attended or no-show (seeded, by persona)
+  1. messages held for quiet hours whose time has come are sent
+  2. visits that ended an hour ago are marked attended or no-show (seeded, by persona); stays whose readmission
+     date has come get their 30-day outcome (sim/outcomes.py: a completed visit lowers the chance)
   3. at 7 AM the clinic cancels a few upcoming visits (doctor out, schedule changes)
   4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night)
   5. in outreach hours (9 AM to 7 PM): day-before reminders, then one outreach turn per due case
@@ -23,6 +24,8 @@ from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.agents.graph import run_turn
 from readmit.outreach import cadence, store
+from readmit.sim import outcomes as world_outcomes
+from readmit.sim.outcomes import Outcome
 from readmit.sim.patients import Patient, Reply, attends, bad_contacts, respond, seeded
 
 HOUR = timedelta(hours=1)
@@ -57,22 +60,6 @@ def load_patients(
     }
 
 
-def readmissions() -> dict[str, object]:
-    """When each case's patient is next admitted after the stay that opened the case (the world's hidden future).
-    Any admission stops outreach: the patient is in the hospital."""
-    with db.transaction() as c:
-        if not db.one(c, "select to_regclass('sim.encounters') is not null as ok")["ok"]:
-            return {}
-        rows = db.rows(
-            c,
-            """select k.case_id, min(e2.admit_datetime) as at from outreach.cases k
-               join sim.encounters e1 on e1.encounter_id = k.encounter_id
-               join sim.encounters e2 on e2.patient_id = k.patient_id and e2.admit_datetime > e1.discharge_datetime
-               group by k.case_id""",
-        )
-    return {r["case_id"]: r["at"] for r in rows}
-
-
 def new_deliveries(seen: set[str]) -> list[dict]:
     """Outbound messages that reached the patient and haven't been shown to them yet."""
     with db.transaction() as c:
@@ -97,13 +84,14 @@ async def simulate(
     no_show: dict[str, float] | None = None,
     cancel_rate: float = CLINIC_CANCEL_RATE,
     bad: dict[str, tuple[str, ...]] | None = None,
-    readmit_at: dict[str, object] | None = None,
+    outcomes: dict[str, Outcome] | None = None,
 ) -> list[dict]:
     """Advance the clock hour by hour for `days` days. Returns one summary row per simulated day."""
     t = store.now().replace(minute=0, second=0, microsecond=0)
     end = t + timedelta(days=days)
     patients = load_patients(personas, bad, seed)
-    future_admissions = dict(readmissions() if readmit_at is None else readmit_at)
+    pending_outcomes = dict(world_outcomes.draw_outcomes(seed) if outcomes is None else outcomes)
+    world_outcomes.save(pending_outcomes)
     pending: list[Reply] = []
     seen: set[str] = set()
     daily: list[dict] = []
@@ -111,16 +99,19 @@ async def simulate(
     while t < end:
         store.set_now(t)
         day["held_sent"] += store.deliver_due()
-        for cid, at in sorted(future_admissions.items(), key=lambda kv: str(kv[1])):
-            if at <= t:
-                store.mark_readmitted(cid, at)
-                del future_admissions[cid]
-                day["readmitted"] += 1
         for v in store.visits_to_settle():
             persona = patients[v["case_id"]].persona if v["case_id"] in patients else "engaged"
             came = attends(persona, f"{v['case_id']}|{v['start_at']}", seed, (no_show or {}).get(persona))
             store.record_visit(v["appointment_id"], came)
             day["visit_attended" if came else "visit_no_show"] += 1
+        for enc, o in sorted(pending_outcomes.items(), key=lambda kv: kv[1].readmit_at):
+            if o.readmit_at > t:
+                break
+            del pending_outcomes[enc]
+            if world_outcomes.decide(o)["readmitted"]:
+                day["readmitted" if o.case_id else "readmitted_holdout"] += 1
+                if o.case_id:
+                    store.mark_readmitted(o.case_id, o.readmit_at)
         if t.hour == 7:
             for a in upcoming_visits():
                 if seeded(seed, "clinic", a["case_id"], a["start_at"], t.date()).random() < cancel_rate:
@@ -198,6 +189,18 @@ def main() -> None:
         print(f"  {k:<{width}}  " + " ".join(f"{d.get(k, 0):>3}" for d in daily))
     print(f"  {'(day)':<{width}}  " + " ".join(d["day"][-2:].rjust(3) for d in daily))
     print(f"\n  clock {store.now():%Y-%m-%d %H:%M}")
+    r = world_outcomes.report()
+    if r:
+
+        def fmt(pair):
+            rate_, n = pair
+            return f"{rate_:.0%} of {n}" if n else "none yet"
+
+        print("  30-day readmissions (decided so far):")
+        print(f"    outreach {fmt(r['outreach'])}   holdout {fmt(r['holdout'])}   (randomized: an honest effect)")
+        print(f"    attended a visit {fmt(r['attended'])}   did not {fmt(r['not_attended'])}   (self-selected: biased)")
+        if r["true_effect"] is not None:
+            print(f"    true expected effect of outreach for this cohort: {r['true_effect']:.1%} points fewer")
     print("  how each persona's cases ended:")
     for persona, counts in sorted(outcomes_by_persona().items()):
         print(f"    {persona:<18} " + ", ".join(f"{s} {n}" for s, n in counts.most_common()))
