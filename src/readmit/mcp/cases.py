@@ -80,6 +80,17 @@ def create_nurse_task(
     return call(store.create_nurse_task, case_id, kind, priority, reason, idempotency_key, summary)
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+def record_barrier(
+    case_id: CaseId,
+    detail: Annotated[str, Field(min_length=2, description="The barrier in the patient's words, briefly")],
+    source: Annotated[str, Field(description="Where it came from, e.g. 'patient reply'")] = "patient reply",
+) -> dict:
+    """Record a barrier the patient told us about (no ride, cost, work). Named like the model's barriers, so the
+    planner can act on it (a transport referral, a video visit)."""
+    return call(store.record_barrier, case_id, detail, source)
+
+
 @mcp.tool(annotations={"readOnlyHint": False})
 def add_case_note(case_id: CaseId, note: Annotated[str, Field(min_length=3)]) -> dict:
     """Add a free-text note to the case history, e.g. what the patient said or why a decision was made."""

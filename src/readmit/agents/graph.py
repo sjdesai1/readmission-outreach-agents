@@ -363,12 +363,23 @@ async def hold_for_nurse(state: TurnState, gw: Gateway) -> dict:
 
 
 async def remember(state: TurnState, gw: Gateway) -> dict:
-    """Save standing preferences the patient stated ("I work mornings", "video is easier for me").
-    Only when the interpreter marked them as standing, and only known keys."""
+    """Save what the patient told us that should outlast this turn:
+    - a barrier ("I don't have a ride"), so the planner can act on it now and on later turns
+    - standing preferences ("I work mornings"), only when the interpreter marked them as standing, known keys only
+    """
     intent = state.get("intent") or {}
-    if not intent.get("standing"):
-        return {}
     details = intent.get("details") or {}
+    out: dict = {}
+    if intent.get("intent") == "barrier" and details.get("barrier"):
+        try:
+            b = await gw.call("cases", "record_barrier", case_id=state["case_id"], detail=details["barrier"])
+            risk = dict((state.get("summary") or {}).get("risk") or {})
+            risk["barriers"] = sorted({*(risk.get("barriers") or []), b["barrier"]})
+            out = {"summary": {**state["summary"], "risk": risk}}
+        except ToolFailed:
+            pass  # the planner still sees the barrier in this turn's intent
+    if not intent.get("standing"):
+        return out
     memory = dict((state.get("summary") or {}).get("memory") or {})
     saved = []
     for key in MEMORY_KEYS:
@@ -389,8 +400,9 @@ async def remember(state: TurnState, gw: Gateway) -> dict:
         memory[key] = value
         saved.append(key)
     if not saved:
-        return {}
-    return {"remembered": saved, "summary": {**state["summary"], "memory": memory}}
+        return out
+    summary = out.get("summary") or state["summary"]
+    return {"remembered": saved, "summary": {**summary, "memory": memory}}
 
 
 async def opt_out(state: TurnState, gw: Gateway) -> dict:

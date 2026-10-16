@@ -1,10 +1,11 @@
 """Simulated days: the sequencer runs the cadence end to end (stub agents, in-memory MCP servers)."""
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
+from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.outreach import store
 from readmit.sim.days import outcomes_by_persona, simulate
@@ -16,7 +17,7 @@ SILENT = {"C1": "silent", "C2": "silent"}
 
 
 def run(days, **personas):
-    return asyncio.run(simulate(Gateway.in_memory(), days=days, personas=personas, cancel_rate=0.0))
+    return asyncio.run(simulate(Gateway.in_memory(), bad={}, days=days, personas=personas, cancel_rate=0.0))
 
 
 def outbound(case_id):
@@ -24,7 +25,7 @@ def outbound(case_id):
 
 
 def test_a_week_with_no_replies_runs_the_full_cadence_then_closes():
-    daily = asyncio.run(simulate(Gateway.in_memory(), days=7, personas=SILENT))
+    daily = asyncio.run(simulate(Gateway.in_memory(), bad={}, days=7, personas=SILENT))
     assert len(daily) == 7
     for cid in ("C1", "C2"):
         assert len(outbound(cid)) == 3  # day 0, +48h, +96h
@@ -35,7 +36,7 @@ def test_a_week_with_no_replies_runs_the_full_cadence_then_closes():
 
 
 def test_attempts_are_spaced_and_only_in_daytime():
-    asyncio.run(simulate(Gateway.in_memory(), days=5, personas=SILENT))
+    asyncio.run(simulate(Gateway.in_memory(), bad={}, days=5, personas=SILENT))
     times = [m["at"] for m in outbound("C1")]
     assert [t[:16] for t in times] == ["2026-09-09 09:00", "2026-09-11 09:00", "2026-09-13 09:00"]  # every 48h
 
@@ -73,7 +74,9 @@ def test_patients_never_answer_a_confirmation():
 
 def test_no_show_patient_is_offered_new_times_and_rebooks():
     personas = {"C1": "engaged", "C2": "silent"}
-    asyncio.run(simulate(Gateway.in_memory(), days=3, personas=personas, no_show={"engaged": 1.0}, cancel_rate=0.0))
+    asyncio.run(
+        simulate(Gateway.in_memory(), bad={}, days=3, personas=personas, no_show={"engaged": 1.0}, cancel_rate=0.0)
+    )
     bodies = [m["body"] for m in outbound("C1")]
     assert any("missed you" in b for b in bodies)
     inbound = [m for m in store.get_thread("C1") if m["direction"] == "inbound"]
@@ -81,5 +84,31 @@ def test_no_show_patient_is_offered_new_times_and_rebooks():
 
 
 def test_clinic_cancellation_is_apologized_for():
-    asyncio.run(simulate(Gateway.in_memory(), days=2, personas={"C1": "engaged", "C2": "silent"}, cancel_rate=1.0))
+    asyncio.run(
+        simulate(Gateway.in_memory(), bad={}, days=2, personas={"C1": "engaged", "C2": "silent"}, cancel_rate=1.0)
+    )
     assert any("clinic had to cancel" in m["body"] for m in outbound("C1"))
+
+
+# ------------------------------------------------------------------ delivery failures and readmission
+def test_bounced_email_with_no_other_channel_goes_to_a_nurse():
+    personas = {"C1": "engaged", "C2": "silent"}
+    asyncio.run(simulate(Gateway.in_memory(), days=1, personas=personas, bad={"C1": ("email",)}, cancel_rate=0.0))
+    assert store.patient_summary("C1")["contact"]["undeliverable"] == ["email"]
+    assert store.get_case("C1")["status"] == "escalated"  # nobody can reach her by message: a nurse calls
+
+
+def test_wrong_number_switches_to_another_channel():
+    personas = {"C1": "silent", "C2": "engaged"}
+    asyncio.run(simulate(Gateway.in_memory(), days=1, personas=personas, bad={"C2": ("sms", "phone")}, cancel_rate=0.0))
+    assert [m["channel"] for m in outbound("C2")][:2] == ["sms", "portal"]  # Jose: texts fail, the portal works
+
+
+def test_readmission_stops_outreach_and_frees_the_visit():
+    personas = {"C1": "engaged", "C2": "silent"}
+    back = {"C1": datetime(2026, 9, 9, 22, 0)}  # booked during the day, readmitted that night
+    asyncio.run(simulate(Gateway.in_memory(), days=2, personas=personas, bad={}, readmit_at=back, cancel_rate=0.0))
+    assert store.get_case("C1")["status"] == "readmitted"
+    assert store.upcoming_appointment("C1") is None
+    with db.transaction() as c:  # the slot went back to the clinic
+        assert db.one(c, "select status from outreach.slots where slot_id = 'S1'")["status"] == "open"

@@ -15,14 +15,29 @@ async def care_planner(state: TurnState, gw: Gateway) -> dict:
     contact = state["summary"]["contact"]
     allowed, preferred = contact["allowed_channels"], contact["preferred_channel"]
     channel = preferred if preferred in allowed else (allowed[0] if allowed else None)
-    return {
-        "plan": {
-            "goal": "follow-up visit within 7 days of discharge",
-            "channel": channel,
-            "talking_points": [],
-            "referrals": [],
-        }
+    barriers = ((state["summary"].get("risk") or {}).get("barriers")) or []
+    plan = {
+        "goal": "follow-up visit within 7 days of discharge",
+        "channel": channel,
+        "talking_points": [],
+        "referrals": [],
+        "referrals_filed": [],
     }
+    if "transport_barrier" in barriers:  # the one barrier with a direct fix: a ride, or a video visit
+        plan["talking_points"].append("we can arrange a ride, or do a video visit from home")
+        try:
+            await gw.call(
+                "referrals",
+                "create_referral",
+                case_id=state["case_id"],
+                referral_type="transport",
+                reason="patient has no transportation to the follow-up visit",
+                idempotency_key=f"{state['case_id']}:ref:transport",  # one ride referral per case
+            )
+            plan["referrals_filed"].append("transport")
+        except ToolFailed:
+            pass
+    return {"plan": plan}
 
 
 STUB_INTENTS = [  # keyword rules, first match wins: enough for free simulation runs, not for production
@@ -38,7 +53,8 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
     t = (state.get("inbound") or "").lower()
     for name, pattern in STUB_INTENTS:
         if re.search(pattern, t):
-            return {"intent": {"intent": name, "accepts": False, "details": {}}}
+            details = {"barrier": (state.get("inbound") or "")[:200]} if name == "barrier" else {}
+            return {"intent": {"intent": name, "accepts": False, "details": details}}
     if re.search(r"\b(yes|book|sure|ok|okay|first|works|sí|si|primera|primero)\b", t):
         intent = {"intent": "wants_visit", "accepts": True, "details": {}}
     elif re.search(r"\b(no thanks|not interested|don'?t need)\b", t):

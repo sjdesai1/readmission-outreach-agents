@@ -238,3 +238,27 @@ def test_reminder_due_the_day_before_once():
     assert store.reminders_due() == []  # more than 26h away
     store.set_now(datetime(2026, 9, 10, 9, 0))
     assert [r["appointment_id"] for r in store.reminders_due()] == [a["appointment_id"]]
+
+
+# ------------------------------------------------------------------ delivery failures, barriers, readmission
+def test_wrong_number_blocks_texts_and_calls():
+    m = store.send_message("C2", "sms", "Hi Jose", "kd1")
+    store.delivery_failed(m["message_id"], "wrong number")
+    contact = store.patient_summary("C2")["contact"]
+    assert contact["allowed_channels"] == ["portal"] and contact["undeliverable"] == ["phone", "sms"]
+    with pytest.raises(StoreError, match="not getting through"):
+        store.send_message("C2", "phone", "Hi Jose", "kd2")
+
+
+def test_barriers_from_replies_join_the_model_barriers():
+    store.record_barrier("C2", "I don't have a ride to get there", "patient reply")
+    store.record_barrier("C2", "no car either", "patient reply")  # same barrier: recorded once
+    assert store.patient_summary("C2")["risk"]["barriers"] == ["transport_barrier"]
+    assert store.barrier_name("I have to care for my mom") == "caregiving_barrier"  # "care" is not "car"
+
+
+def test_readmission_closes_the_case_and_cancels_the_visit():
+    store.book_appointment("C1", "S1", "kd3")
+    store.mark_readmitted("C1", datetime(2026, 9, 9, 20, 0))
+    assert store.get_case("C1")["status"] == "readmitted"
+    assert store.upcoming_appointment("C1") is None and "C1" not in [c["case_id"] for c in store.due_cases()]

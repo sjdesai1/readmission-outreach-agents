@@ -19,6 +19,12 @@ each minor version is a finished milestone.
   one per visit); visits marked attended (case completed) or no-show (seeded per persona); the clinic cancels
   some visits. No-shows and clinic cancellations restart outreach with a fresh cadence and a rebooking offer
   (writer v8: no blame after a no-show, an apology after a clinic cancellation)
+- Milestone 4 step 4: real-world events. Bounced emails and wrong numbers (seeded per patient) mark the
+  channel undeliverable, a wrong number blocks texts and calls, and the next attempt goes out on another channel
+  (or to a nurse if none is left). A readmission stops outreach at once and frees any booked visit. Barriers
+  patients mention ("no ride") are recorded with the model's barrier names; the planner sees them and the
+  rule-based planner files a transport referral
+- Referrals are idempotent per case and type, not per turn (no duplicate ride referrals)
 
 ### Fixed
 - `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then

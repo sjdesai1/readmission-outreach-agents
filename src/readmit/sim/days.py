@@ -4,12 +4,13 @@
     python -m readmit.sim.days --days 3 --llm       # the real LLM agents (costs tokens, slower)
 
 Each simulated hour:
-  1. messages held for quiet hours whose time has come are sent
+  1. messages held for quiet hours whose time has come are sent; patients readmitted by now stop outreach
   2. visits that ended an hour ago are marked attended or no-show (seeded, by persona)
   3. at 7 AM the clinic cancels a few upcoming visits (doctor out, schedule changes)
   4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night)
   5. in outreach hours (9 AM to 7 PM): day-before reminders, then one outreach turn per due case
-  6. every message delivered this hour is shown to its scripted patient, who may schedule a reply
+  6. every message delivered this hour reaches its scripted patient (or bounces, if that contact is wrong),
+     who may schedule a reply
 Prints a summary per simulated day and, at the end, how each persona's cases ended.
 """
 
@@ -22,15 +23,18 @@ from readmit import db
 from readmit.agents.gateway import Gateway
 from readmit.agents.graph import run_turn
 from readmit.outreach import cadence, store
-from readmit.sim.patients import Patient, Reply, attends, respond, seeded
+from readmit.sim.patients import Patient, Reply, attends, bad_contacts, respond, seeded
 
 HOUR = timedelta(hours=1)
 CLINIC_CANCEL_RATE = 0.03  # chance per upcoming visit, checked each morning
 DELIVERED = ("sent", "delivered", "queued")
 
 
-def load_patients(personas: dict[str, str] | None = None) -> dict[str, Patient]:
-    """One scripted patient per case. Personas come from the hidden truth table (or are passed in by tests)."""
+def load_patients(
+    personas: dict[str, str] | None = None, bad: dict[str, tuple[str, ...]] | None = None, seed: int = 7
+) -> dict[str, Patient]:
+    """One scripted patient per case. Personas come from the hidden truth table, broken contacts are seeded per
+    patient (both can be passed in by tests)."""
     with db.transaction() as c:
         rows = db.rows(
             c,
@@ -42,7 +46,31 @@ def load_patients(personas: dict[str, str] | None = None) -> dict[str, Patient]:
             truth = db.rows(c, "select patient_id, persona from truth.patients") if has_truth else []
             by_patient = {r["patient_id"]: r["persona"] for r in truth}
             personas = {r["case_id"]: by_patient.get(r["patient_id"], "engaged") for r in rows}
-    return {r["case_id"]: Patient(r["case_id"], personas.get(r["case_id"], "silent"), r["birth_year"]) for r in rows}
+    return {
+        r["case_id"]: Patient(
+            r["case_id"],
+            personas.get(r["case_id"], "silent"),
+            r["birth_year"],
+            bad_channels=bad.get(r["case_id"], ()) if bad is not None else bad_contacts(r["patient_id"], seed),
+        )
+        for r in rows
+    }
+
+
+def readmissions() -> dict[str, object]:
+    """When each case's patient is next admitted after the stay that opened the case (the world's hidden future).
+    Any admission stops outreach: the patient is in the hospital."""
+    with db.transaction() as c:
+        if not db.one(c, "select to_regclass('sim.encounters') is not null as ok")["ok"]:
+            return {}
+        rows = db.rows(
+            c,
+            """select k.case_id, min(e2.admit_datetime) as at from outreach.cases k
+               join sim.encounters e1 on e1.encounter_id = k.encounter_id
+               join sim.encounters e2 on e2.patient_id = k.patient_id and e2.admit_datetime > e1.discharge_datetime
+               group by k.case_id""",
+        )
+    return {r["case_id"]: r["at"] for r in rows}
 
 
 def new_deliveries(seen: set[str]) -> list[dict]:
@@ -68,11 +96,14 @@ async def simulate(
     seed: int = 7,
     no_show: dict[str, float] | None = None,
     cancel_rate: float = CLINIC_CANCEL_RATE,
+    bad: dict[str, tuple[str, ...]] | None = None,
+    readmit_at: dict[str, object] | None = None,
 ) -> list[dict]:
     """Advance the clock hour by hour for `days` days. Returns one summary row per simulated day."""
     t = store.now().replace(minute=0, second=0, microsecond=0)
     end = t + timedelta(days=days)
-    patients = load_patients(personas)
+    patients = load_patients(personas, bad, seed)
+    future_admissions = dict(readmissions() if readmit_at is None else readmit_at)
     pending: list[Reply] = []
     seen: set[str] = set()
     daily: list[dict] = []
@@ -80,6 +111,11 @@ async def simulate(
     while t < end:
         store.set_now(t)
         day["held_sent"] += store.deliver_due()
+        for cid, at in sorted(future_admissions.items(), key=lambda kv: str(kv[1])):
+            if at <= t:
+                store.mark_readmitted(cid, at)
+                del future_admissions[cid]
+                day["readmitted"] += 1
         for v in store.visits_to_settle():
             persona = patients[v["case_id"]].persona if v["case_id"] in patients else "engaged"
             came = attends(persona, f"{v['case_id']}|{v['start_at']}", seed, (no_show or {}).get(persona))
@@ -105,6 +141,11 @@ async def simulate(
                 day[(s.get("outcome") or {}).get("action") or "skipped"] += 1
         for m in new_deliveries(seen):
             patient = patients.get(m["case_id"])
+            if patient and m["channel"] in patient.bad_channels:
+                reason = "email bounced" if m["channel"] == "email" else "wrong number"
+                store.delivery_failed(m["message_id"], reason)
+                day["delivery_failed"] += 1
+                continue
             if patient and (reply := respond(patient, m, t, seed)):
                 pending.append(reply)
         t += HOUR
