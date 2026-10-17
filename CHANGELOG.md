@@ -30,6 +30,11 @@ each minor version is a finished milestone.
   outcomes. The scoring holdout (20%, no outreach) makes outreach vs holdout a randomized comparison; the run
   reports it next to the biased attended-vs-not comparison and the true effect (truth.outcome_draws,
   truth.outcome_results). Replaces the step 4 stand-in that only saw later admissions
+- Milestone 4 step 6: nurse queue screen (`make nurse`, Streamlit): queue in work order with lateness, the
+  patient, risk and barriers, the shared thread (patient, AI and nurse messages), reply and resolve / hand back.
+  Messages record their author; agents see nurse messages labeled. Simulated nurses work the queue (urgent any
+  hour, routine on weekday shifts) and hand cases back, so escalated patients can still get booked. A hand-back
+  restarts the cadence, and nurse notes don't count as outreach attempts
 
 ### Fixed
 - `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then

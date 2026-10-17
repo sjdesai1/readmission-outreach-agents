@@ -7,6 +7,7 @@ dynamic = ["dependencies"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff==0.17.0", "pre-commit>=4.0", "pyright>=1.1.400"]
+ui = ["streamlit>=1.40"]   # nurse queue screen (make nurse); kept out of the Airflow and MCP images
 
 [build-system]
 requires = ["setuptools>=69"]

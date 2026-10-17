@@ -425,3 +425,12 @@ def test_reviewer_escalate_without_medical_advice_gets_one_rewrite_first(fake_ll
     answers["review_message"] = {"verdict": "escalate", "reasons": ["Promises something not in the facts."]}
     s = turn("C1")
     assert s["path"].count("message_writer") == 2 and s["outcome"]["action"] == "escalated"
+
+
+def test_agents_see_which_messages_a_nurse_wrote():
+    thread = [
+        {"direction": "outbound", "author": "ai", "channel": "sms", "at": "2026-09-09 09:00:00", "body": "a"},
+        {"direction": "inbound", "author": "patient", "channel": "sms", "at": "2026-09-09 10:00:00", "body": "b"},
+        {"direction": "outbound", "author": "nurse", "channel": "sms", "at": "2026-09-09 11:00:00", "body": "c"},
+    ]
+    assert [m["from"] for m in llm_agents._conversation({"thread": thread})] == ["care team", "patient", "nurse"]

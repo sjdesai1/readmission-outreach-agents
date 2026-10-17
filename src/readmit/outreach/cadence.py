@@ -17,9 +17,12 @@ OUTREACH_HOURS = (9, 19)  # the sequencer starts outreach turns only between 9 A
 
 
 def unanswered(thread: list[dict]) -> int:
-    """Outbound messages since the patient last wrote (the whole thread, oldest first)."""
+    """AI outreach messages since the patient last wrote (the whole thread, oldest first). A nurse's note is not
+    an outreach attempt, so it doesn't count toward giving up."""
     n = 0
     for m in thread:
+        if m.get("author") == "nurse":
+            continue
         n = 0 if m["direction"] == "inbound" else n + 1
     return n
 

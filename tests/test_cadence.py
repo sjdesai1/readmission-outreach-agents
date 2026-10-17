@@ -30,3 +30,8 @@ def test_outreach_only_in_daytime_hours():
     assert in_outreach_hours(datetime(2026, 9, 9, 9, 0))
     assert not in_outreach_hours(datetime(2026, 9, 9, 19, 0))
     assert not in_outreach_hours(datetime(2026, 9, 9, 7, 0))
+
+
+def test_a_nurse_note_is_not_an_outreach_attempt():
+    thread = [*msgs("outbound", "inbound", "outbound"), {"direction": "outbound", "author": "nurse"}]
+    assert unanswered(thread) == 1
