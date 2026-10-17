@@ -34,6 +34,7 @@ class Outcome:
     rr: float
     u: float
     readmit_at: datetime
+    discharge: datetime | None = None
 
     @property
     def p1(self) -> float:
@@ -77,6 +78,7 @@ def draw_outcomes(seed: int = 7) -> dict[str, Outcome]:
             rr=relative_reduction(r["dx"], r),
             u=seeded(seed, "outcome", enc).random(),
             readmit_at=r["discharge_datetime"] + timedelta(days=days),
+            discharge=r["discharge_datetime"],
         )
     return out
 

@@ -9,7 +9,8 @@ Each simulated hour:
      date has come get their 30-day outcome (sim/outcomes.py: a completed visit lowers the chance)
   3. at 7 AM the clinic cancels a few upcoming visits (doctor out, schedule changes)
   4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night);
-     simulated nurses work the queue (urgent any hour, routine on weekday shifts) and hand cases back
+     simulated nurses work the queue (urgent any hour, routine on weekday shifts) and hand cases back;
+     cases reaching day 7, 14 or 21 after discharge get a landmark re-score (if the models were trained)
   5. in outreach hours (9 AM to 7 PM): day-before reminders, then one outreach turn per due case
   6. every message delivered this hour reaches its scripted patient (or bounces, if that contact is wrong),
      who may schedule a reply
@@ -27,8 +28,10 @@ from readmit.agents.graph import run_turn
 from readmit.outreach import cadence, store
 from readmit.sim import nurses as sim_nurses
 from readmit.sim import outcomes as world_outcomes
+from readmit.sim import signals as world_signals
 from readmit.sim.outcomes import Outcome
 from readmit.sim.patients import Patient, Reply, attends, bad_contacts, respond, seeded
+from readmit.sim.rescore import Rescorer
 
 HOUR = timedelta(hours=1)
 CLINIC_CANCEL_RATE = 0.03  # chance per upcoming visit, checked each morning
@@ -95,6 +98,10 @@ async def simulate(
     patients = load_patients(personas, bad, seed)
     pending_outcomes = dict(world_outcomes.draw_outcomes(seed) if outcomes is None else outcomes)
     world_outcomes.save(pending_outcomes)
+    live_signals = world_signals.build_live(pending_outcomes, seed)
+    if len(live_signals):
+        world_signals.save(live_signals, replace_live=True)
+    rescorer = Rescorer()
     pending: list[Reply] = []
     seen: set[str] = set()
     daily: list[dict] = []
@@ -127,6 +134,7 @@ async def simulate(
             day["reply:" + ((s.get("outcome") or {}).get("action") or "skipped")] += 1
         if nurses:
             day["nurse_resolved"] += sim_nurses.work(t)
+        day["rescored"] += rescorer.run(t)
         if cadence.in_outreach_hours(t):
             for r in store.reminders_due():
                 s = await run_turn(gateway, r["case_id"], "reminder", agents=agents)

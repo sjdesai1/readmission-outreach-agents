@@ -35,6 +35,11 @@ each minor version is a finished milestone.
   Messages record their author; agents see nurse messages labeled. Simulated nurses work the queue (urgent any
   hour, routine on weekday shifts) and hand cases back, so escalated patients can still get booked. A hand-back
   restarts the cadence, and nurse notes don't count as outreach attempts
+- Milestone 4 step 7a: landmark re-scores at day 7, 14 and 21. The world now generates post-discharge signals
+  (pharmacy fills, ED visits, kept follow-ups) from the hidden truth (`make signals`). Landmark models train on
+  patients still home at each landmark and are compared with the same patients without the signals, by
+  5-fold cross-validation grouped by patient (`make landmark`, logged to MLflow). The simulation re-scores live cases at each landmark and reorders
+  outreach. Outreach behavior is left for after a cold start (step 7b)
 
 ### Fixed
 - `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then

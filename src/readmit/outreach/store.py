@@ -521,6 +521,19 @@ def mark_readmitted(case_id: str, admitted_at) -> dict:
     return get_case(case_id, events=3)
 
 
+def rescore(case_id: str, risk: float, landmark: int) -> dict:
+    """A landmark re-score (day 7, 14, 21): the case's risk is updated, so outreach and queues reorder."""
+    with db.transaction() as c:
+        case = _case(c, case_id, lock=True)
+        if case["status"] in CLOSED_STATUSES:
+            return {"case_id": case_id, "skipped": f"case is {case['status']}"}
+        db.rows(
+            c, "update outreach.cases set risk = :r, updated_at = :t where case_id = :id", r=risk, t=now(c), id=case_id
+        )
+        log_event(c, case_id, "rescored", {"landmark_day": landmark, "before": case["risk"], "after": risk})
+    return {"case_id": case_id, "landmark": landmark, "before": case["risk"], "after": risk}
+
+
 # ------------------------------------------------------------------ appointment lifecycle
 REMIND_WITHIN = timedelta(hours=26)  # remind the day before
 REBOOK_REASONS = ("no_show", "clinic_cancelled")
