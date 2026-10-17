@@ -1,6 +1,6 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
-        world cohort extract extract-eval train score pipeline pipeline-airflow \
+        world cohort extract extract-eval train score signals landmark pipeline pipeline-airflow \
         outreach-setup mcp-logs inspector turn simulate nurse
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
@@ -73,7 +73,13 @@ train:          ## train and compare models, register the champion in MLflow
 score:          ## score live discharges with the champion
 	uv run python -m readmit.model.score
 
-pipeline: world cohort extract extract-eval train score   ## everything, in order
+signals:        ## post-discharge signals for past stays (pharmacy fills, ED visits, kept follow-ups)
+	uv run python -m readmit.sim.signals
+
+landmark:       ## day 7 / 14 / 21 re-score models: train, compare with and without the new signals
+	uv run python -m readmit.model.landmark
+
+pipeline: world cohort extract extract-eval train score signals landmark   ## everything, in order
 
 pipeline-airflow:  ## the same pipeline, run by Airflow
 	docker compose exec airflow airflow dags test m1_build_world

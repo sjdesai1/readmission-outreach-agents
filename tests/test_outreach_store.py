@@ -262,3 +262,10 @@ def test_readmission_closes_the_case_and_cancels_the_visit():
     store.mark_readmitted("C1", datetime(2026, 9, 9, 20, 0))
     assert store.get_case("C1")["status"] == "readmitted"
     assert store.upcoming_appointment("C1") is None and "C1" not in [c["case_id"] for c in store.due_cases()]
+
+
+def test_landmark_rescore_updates_the_risk_and_is_audited():
+    r = store.rescore("C1", 0.62, 7)
+    assert r["before"] == 0.4 and r["after"] == 0.62
+    case = store.get_case("C1")
+    assert case["risk"] == 0.62 and case["recent_events"][-1]["type"] == "rescored"
