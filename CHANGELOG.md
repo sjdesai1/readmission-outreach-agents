@@ -40,8 +40,20 @@ each minor version is a finished milestone.
   patients still home at each landmark and are compared with the same patients without the signals, by
   5-fold cross-validation grouped by patient (`make landmark`, logged to MLflow). The simulation re-scores live cases at each landmark and reorders
   outreach. Outreach behavior is left for after a cold start (step 7b)
+- Milestone 4 step 7a-2: re-scores update the discharge risk instead of refitting. The landmark model is now a
+  logistic regression on the discharge risk (log-odds prior) plus the signals: 5 parameters, saved as JSON with
+  odds ratios. Event-triggered re-scores: an ED visit or no prescription fill by day 3 re-scores the case at once
+  and creates a nurse callback (urgent for an ED visit, routine for a missed fill) when the risk rises 5 points or
+  more or reaches 50%. Days 7, 14 and 21 stay as a safety net. `store.rescore` records the trigger. Fill signals
+  are yes/no (`rx_missing`, `rx_late`) so they mean the same on any day, and a day-3 model serves the missed-fill
+  re-score. Cases whose outreach ended are still re-scored until a readmission, and an ED visit still gets a
+  callback (it doesn't reopen outreach); an event before the case opens is handled when it opens.
+  The simulation prints re-scores by trigger with the average risk change and the callbacks created
 
 ### Fixed
+- The step 7a landmark models (full XGBoost refit) overfit the few readmissions left after each landmark and
+  lowered AUROC (day 14: -0.022, CI excluding zero); replaced by the prior update above
+- Removed a stray `.agents/` editor folder committed by accident; `.agents/` is now gitignored
 - `make outreach-setup` left nurse tasks and patient memory from earlier runs; a replayed idempotency key then
   returned a stale nurse task and the case was never paused. Setup now empties every outreach table
 - Flaky "too many clients" test error: the test fixture now closes its database connections after each test

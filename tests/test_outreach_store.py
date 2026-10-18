@@ -269,3 +269,28 @@ def test_landmark_rescore_updates_the_risk_and_is_audited():
     assert r["before"] == 0.4 and r["after"] == 0.62
     case = store.get_case("C1")
     assert case["risk"] == 0.62 and case["recent_events"][-1]["type"] == "rescored"
+
+
+def test_event_rescore_records_its_trigger():
+    r = store.rescore("C1", 0.55, 4.04, "ed_visit")
+    assert r["trigger"] == "ed_visit"
+    assert store.get_case("C1")["recent_events"][-1]["type"] == "rescored"
+    with pytest.raises(store.StoreError):
+        store.rescore("C1", 0.5, 3, "rumor")
+
+
+def test_rescore_continues_after_outreach_ends_but_not_after_a_readmission():
+    store.update_case("C1", "closed", "test")
+    r = store.rescore("C1", 0.3, 14)
+    assert "skipped" not in r and r["open"] is False and r["status"] == "closed"  # risk still tracked
+    store.mark_readmitted("C1", datetime(2026, 9, 9, 20, 0))
+    assert "skipped" in store.rescore("C1", 0.3, 21)
+    assert any(x["trigger"] == "landmark" for x in store.rescore_summary())
+
+
+def test_a_callback_on_a_finished_case_does_not_reopen_outreach():
+    store.update_case("C1", "completed", "visit done")
+    task = store.create_nurse_task("C1", "callback", "urgent", "ED visit after discharge", "C1:rescore:ed_visit:9.04")
+    assert store.get_case("C1")["status"] == "completed"
+    store.resolve_nurse_task(task["task_id"], "called", hand_back=True)
+    assert store.get_case("C1")["status"] == "completed"
