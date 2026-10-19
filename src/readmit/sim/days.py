@@ -92,6 +92,7 @@ async def simulate(
     bad: dict[str, tuple[str, ...]] | None = None,
     outcomes: dict[str, Outcome] | None = None,
     nurses: bool = True,
+    progress: bool = False,
 ) -> list[dict]:
     """Advance the clock hour by hour for `days` days. Returns one summary row per simulated day."""
     t = store.now().replace(minute=0, second=0, microsecond=0)
@@ -161,6 +162,15 @@ async def simulate(
         t += HOUR
         if t - day_start >= timedelta(days=1):
             daily.append({"day": day_start.date().isoformat(), **day})
+            if progress and len(daily) % 7 == 0:
+                week = Counter()
+                for d in daily[-7:]:
+                    week.update({k: v for k, v in d.items() if k != "day"})
+                print(
+                    f"  through {day_start:%Y-%m-%d}: sent {week['sent']}, booked {week['reply:scheduled']}, "
+                    f"visits {week['visit_attended']}, readmitted {week['readmitted']}, rescored {week['rescored']}",
+                    flush=True,
+                )
             day, day_start = Counter(), t
     return daily
 

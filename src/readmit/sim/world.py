@@ -135,8 +135,11 @@ def sigmoid(x):
 
 
 class World:
-    def __init__(self, n_patients=1000, seed=7):
+    def __init__(self, n_patients=1000, seed=7, engagement_risk: dict[str, float] | None = None):
         self.n = n_patients
+        # extra log-odds of readmission by persona. None (the main world): how a patient engages with outreach
+        # says nothing about their risk. The program world's positive control sets it (sim/program.py).
+        self.engagement_risk = engagement_risk or {}
         self.rng = np.random.default_rng(seed)
         self.writer = NoteWriter(self.rng)
 
@@ -366,7 +369,7 @@ class World:
                 0.62 + 0.12 * p["pcp_assigned"] - 0.20 * h["transport_barrier"] - 0.15 * h["housing_unstable"]
             ),
         }
-        e["true_logit"] = self.risk_logit(e, h)
+        e["true_logit"] = self.risk_logit(e, h) + self.engagement_risk.get(h["persona"], 0.0)
         e["true_risk"] = float(sigmoid(e["true_logit"]))
         return e
 
