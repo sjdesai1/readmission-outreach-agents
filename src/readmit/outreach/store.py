@@ -521,17 +521,69 @@ def mark_readmitted(case_id: str, admitted_at) -> dict:
     return get_case(case_id, events=3)
 
 
-def rescore(case_id: str, risk: float, landmark: int) -> dict:
-    """A landmark re-score (day 7, 14, 21): the case's risk is updated, so outreach and queues reorder."""
+RESCORE_TRIGGERS = ("landmark", "ed_visit", "missed_fill")
+NO_RESCORE = ("readmitted", "suppressed")  # back in the hospital (also logged for closed cases), or never started
+
+
+def rescore(case_id: str, risk: float, day: float, trigger: str = "landmark") -> dict:
+    """A re-score after discharge: on a landmark day (7, 14, 21) or right after an event (an ED visit, no
+    prescription fill by day 3). The case's risk is updated, so outreach and queues reorder. Cases whose outreach
+    ended (visit completed, closed) are still re-scored: the risk keeps mattering until day 30. `open` says
+    whether outreach is still running."""
+    if trigger not in RESCORE_TRIGGERS:
+        raise StoreError(f"trigger must be one of {RESCORE_TRIGGERS}")
     with db.transaction() as c:
         case = _case(c, case_id, lock=True)
-        if case["status"] in CLOSED_STATUSES:
-            return {"case_id": case_id, "skipped": f"case is {case['status']}"}
+        readmitted = db.one(
+            c, "select count(*) as n from outreach.events where case_id = :id and type = 'readmitted'", id=case_id
+        )["n"]
+        if case["status"] in NO_RESCORE or readmitted:
+            return {"case_id": case_id, "skipped": "readmitted" if readmitted else f"case is {case['status']}"}
         db.rows(
             c, "update outreach.cases set risk = :r, updated_at = :t where case_id = :id", r=risk, t=now(c), id=case_id
         )
-        log_event(c, case_id, "rescored", {"landmark_day": landmark, "before": case["risk"], "after": risk})
-    return {"case_id": case_id, "landmark": landmark, "before": case["risk"], "after": risk}
+        log_event(
+            c,
+            case_id,
+            "rescored",
+            {
+                "trigger": trigger,
+                "day": round(float(day), 2),
+                "before": case["risk"],
+                "after": risk,
+                "open": case["status"] not in CLOSED_STATUSES,
+            },
+        )
+    return {
+        "case_id": case_id,
+        "trigger": trigger,
+        "day": day,
+        "before": case["risk"],
+        "after": risk,
+        "open": case["status"] not in CLOSED_STATUSES,
+        "status": case["status"],
+    }
+
+
+def rescore_summary() -> list[dict]:
+    """Re-scores by trigger: how many, how many on open cases, how many raised the risk 5+ points, the average
+    risk before and after, and the nurse callbacks they created."""
+    with db.transaction() as c:
+        return db.rows(
+            c,
+            """with r as (
+                   select detail->>'trigger' as trigger, (detail->>'before')::float as before,
+                          (detail->>'after')::float as after, coalesce((detail->>'open')::boolean, true) as open
+                   from outreach.events where type = 'rescored'),
+               a as (
+                   select split_part(idempotency_key, ':', 3) as trigger, count(*) as alerts
+                   from outreach.nurse_tasks where idempotency_key like '%:rescore:%' group by 1)
+               select r.trigger, count(*) as n, count(*) filter (where r.open) as open,
+                      count(*) filter (where r.after - r.before >= 0.05) as rose,
+                      avg(r.before) as before, avg(r.after) as after, coalesce(max(a.alerts), 0) as alerts
+               from r left join a using (trigger)
+               group by r.trigger order by r.trigger""",
+        )
 
 
 # ------------------------------------------------------------------ appointment lifecycle

@@ -10,7 +10,8 @@ Each simulated hour:
   3. at 7 AM the clinic cancels a few upcoming visits (doctor out, schedule changes)
   4. patient replies that are due arrive, and each gets an inbound turn (any hour: people text at night);
      simulated nurses work the queue (urgent any hour, routine on weekday shifts) and hand cases back;
-     cases reaching day 7, 14 or 21 after discharge get a landmark re-score (if the models were trained)
+     cases get re-scored right after an ED visit or a missed prescription fill (a nurse callback if the risk
+     jumps), and on day 7, 14 and 21 after discharge (if `make landmark` saved the models)
   5. in outreach hours (9 AM to 7 PM): day-before reminders, then one outreach turn per due case
   6. every message delivered this hour reaches its scripted patient (or bounces, if that contact is wrong),
      who may schedule a reply
@@ -134,7 +135,12 @@ async def simulate(
             day["reply:" + ((s.get("outcome") or {}).get("action") or "skipped")] += 1
         if nurses:
             day["nurse_resolved"] += sim_nurses.work(t)
+        alerts = rescorer.alerts
         day["rescored"] += rescorer.run(t)
+        day["rescore_alert"] += rescorer.alerts - alerts
+        for err in rescorer.alert_errors:
+            print(f"  nurse callback refused: {err}")
+        rescorer.alert_errors.clear()
         if cadence.in_outreach_hours(t):
             for r in store.reminders_due():
                 s = await run_turn(gateway, r["case_id"], "reminder", agents=agents)
@@ -214,6 +220,17 @@ def main() -> None:
         print(f"    attended a visit {fmt(r['attended'])}   did not {fmt(r['not_attended'])}   (self-selected: biased)")
         if r["true_effect"] is not None:
             print(f"    true expected effect of outreach for this cohort: {r['true_effect']:.1%} points fewer")
+    rows = store.rescore_summary()
+    if rows:
+        print("  re-scores after discharge:")
+        print(
+            f"    {'trigger':<12} {'n':>4} {'open':>5} {'rose 5+':>8} {'avg risk before -> after':>26} {'callbacks':>10}"
+        )
+        for x in rows:
+            print(
+                f"    {x['trigger']:<12} {x['n']:>4} {x['open']:>5} {x['rose']:>8}"
+                f" {x['before']:>17.0%} -> {x['after']:<5.0%} {x['alerts']:>10}"
+            )
     print("  how each persona's cases ended:")
     for persona, counts in sorted(outcomes_by_persona().items()):
         print(f"    {persona:<18} " + ", ".join(f"{s} {n}" for s, n in counts.most_common()))
