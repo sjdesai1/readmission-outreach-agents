@@ -21,11 +21,12 @@ Prints a summary per simulated day and, at the end, how each persona's cases end
 import argparse
 import asyncio
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from readmit import db
+from readmit import db, llm
 from readmit.agents.gateway import Gateway
 from readmit.agents.graph import run_turn
+from readmit.config import settings
 from readmit.outreach import cadence, store
 from readmit.sim import nurses as sim_nurses
 from readmit.sim import outcomes as world_outcomes
@@ -211,6 +212,7 @@ def main() -> None:
         from readmit.agents.llm_agents import LLM_AGENTS
 
         agents = LLM_AGENTS
+    started = datetime.now(UTC)
     daily = asyncio.run(simulate(Gateway.http(), args.days, agents, args.max_cases))
     keys = sorted({k for d in daily for k in d if k != "day"})
     width = max(len(k) for k in keys) if keys else 8
@@ -218,6 +220,15 @@ def main() -> None:
         print(f"  {k:<{width}}  " + " ".join(f"{d.get(k, 0):>3}" for d in daily))
     print(f"  {'(day)':<{width}}  " + " ".join(d["day"][-2:].rjust(3) for d in daily))
     print(f"\n  clock {store.now():%Y-%m-%d %H:%M}")
+    if args.llm:
+        u = llm.usage_since(started)
+        if u:
+            left = max(0.0, settings.llm_daily_budget_usd - llm.spent_today())
+            print(
+                f"  LLM this run: {u['calls']} calls ({u['cache_hits']} cache hits, {u['failures']} failed), "
+                f"{u['input_tokens']:,} in / {u['output_tokens']:,} out tokens, ${u['cost_usd']:.4f}; "
+                f"${left:.2f} of today's ${settings.llm_daily_budget_usd:.2f} budget left"
+            )
     r = world_outcomes.report()
     if r:
 

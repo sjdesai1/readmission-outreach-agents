@@ -11,6 +11,8 @@ What it handles, so no caller has to:
   * validation     output must parse as JSON and match the Pydantic schema; one repair retry
   * tracing        every real call is a LangSmith run with task, prompt version, model, tokens
   * cost log       every call (cached or not) is a row in ops.llm_calls: tokens, cost, latency, outcome
+  * spend cap      once today's real calls cost LLM_DAILY_BUDGET_USD, new calls are refused (cache hits still
+                   work); the agents switch to their rule-based versions for the rest of the day
 """
 
 import hashlib
@@ -34,6 +36,10 @@ litellm.suppress_debug_info = True
 
 class LLMError(RuntimeError):
     pass
+
+
+class LLMBudgetExceeded(LLMError):
+    """Today's spend cap is reached. Callers fall back to rules, they don't escalate."""
 
 
 @dataclass
@@ -114,6 +120,50 @@ def _log(task, prompt_version, meta: CallMeta | None, ok: bool, error: str | Non
         print(f"  [llm] could not write to ops.llm_calls: {str(e)[:120]}", file=sys.stderr)
 
 
+# ------------------------------------------------------------------ spend cap
+def spent_today() -> float:
+    """What real (uncached) calls cost today, by the database's calendar day. 0 if the log isn't there yet."""
+    try:
+        from readmit import db
+
+        with db.transaction() as c:
+            if not db.one(c, "select to_regclass('ops.llm_calls') is not null as ok")["ok"]:
+                return 0.0
+            return float(
+                db.one(
+                    c,
+                    """select coalesce(sum(cost_usd), 0) as usd from ops.llm_calls
+                       where not cached and ts >= date_trunc('day', now())""",
+                )["usd"]
+            )
+    except Exception:  # noqa: BLE001 - can't read the log: don't block calls on a logging problem
+        return 0.0
+
+
+def budget_exhausted() -> bool:
+    return spent_today() >= settings.llm_daily_budget_usd
+
+
+def usage_since(start) -> dict:
+    """Calls, tokens and cost logged since `start` (a run summary)."""
+    from readmit import db
+
+    with db.transaction() as c:
+        if not db.one(c, "select to_regclass('ops.llm_calls') is not null as ok")["ok"]:
+            return {}
+        return db.one(
+            c,
+            """select count(*) filter (where not cached and ok) as calls,
+                      count(*) filter (where cached) as cache_hits,
+                      count(*) filter (where not ok) as failures,
+                      coalesce(sum(input_tokens) filter (where not cached), 0) as input_tokens,
+                      coalesce(sum(output_tokens) filter (where not cached), 0) as output_tokens,
+                      coalesce(sum(cost_usd) filter (where not cached), 0) as cost_usd
+               from ops.llm_calls where ts >= :start""",
+            start=start,
+        )
+
+
 # ------------------------------------------------------------------ one real call
 @traceable(run_type="llm", name="llm_call")
 def _call_model(model: str, messages: list[dict], **_trace_info) -> dict:
@@ -170,10 +220,15 @@ def complete_json(
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     trace_info = {"task": task, "prompt_version": prompt_version}
     errors = []
+    cached_model = None
     if use_cache:  # any model's cached answer wins: never re-call a failing primary for a request already answered
         cached_model = next((m for m in models if _cache_get(_cache_key(m, messages))), None)
         if cached_model:
             models = [cached_model]
+    if not cached_model and budget_exhausted():
+        reason = f"daily LLM budget of ${settings.llm_daily_budget_usd:.2f} reached"
+        _log(task, prompt_version, None, False, reason, models[0])
+        raise LLMBudgetExceeded(reason)
 
     for m in models:
         key = _cache_key(m, messages)

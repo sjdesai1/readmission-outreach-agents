@@ -37,6 +37,8 @@ class Settings:
     llm_fallback_model: str = field(default_factory=lambda: _env("LLM_FALLBACK_MODEL", "gemini/gemini-3.1-flash-lite"))
     llm_judge_model: str = field(default_factory=lambda: _env("LLM_JUDGE_MODEL", "gemini/gemini-3.5-flash"))
     llm_min_interval_s: float = field(default_factory=lambda: float(_env("LLM_MIN_INTERVAL_S", "4")))
+    # spend cap: once real (uncached) calls today cost this much, agents switch to the rule-based versions
+    llm_daily_budget_usd: float = field(default_factory=lambda: float(_env("LLM_DAILY_BUDGET_USD", "1.00")))
     # tracing
     langsmith_api_key: str = field(default_factory=lambda: _env("LANGSMITH_API_KEY"))
     langsmith_project: str = field(default_factory=lambda: _env("LANGSMITH_PROJECT", "readmission-outreach"))

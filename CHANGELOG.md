@@ -5,7 +5,15 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+## [0.4.0] - Milestone 4
+
 ### Added
+- Milestone 4 step 8: cost controls. Daily LLM spend cap (`LLM_DAILY_BUDGET_USD`, default $1): over it, new calls
+  are refused without reaching the API, cached answers still return, and turns run on the rule-based agents; the
+  reply interpreter falls back to rules instead of escalating. At most one AI message per case per day starts
+  from outreach. `make simulate llm=1` prints calls, cache hits, failures, tokens, cost and budget left
+- docs/06_m4_simulation.md, ADR 0008 (spend cap), README: milestone 4 done, run commands, v2 roadmap (uplift
+  model, PCP notifications, learning sequencer, cost)
 - Milestone 4 step 1: simulated days (`make simulate days=14`): hourly clock, held messages delivered, outreach
   turns in daytime hours only
 - Outreach cadence: day 0, follow-up at +48h, a phone call at +96h if calls are allowed, then closed as

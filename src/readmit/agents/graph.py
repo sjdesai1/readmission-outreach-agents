@@ -25,11 +25,13 @@ from datetime import timedelta
 
 from langgraph.graph import END, START, StateGraph
 
+from readmit import llm
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import check_draft, screen_inbound
 from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize_summary, render
 from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel, when, when_es
 from readmit.agents.stubs import STUBS
+from readmit.config import settings
 from readmit.outreach import cadence
 
 CLOSED = {"suppressed", "completed", "opted_out", "readmitted", "closed"}
@@ -682,6 +684,16 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     return g.compile()
 
 
+_BUDGET_NOTICED = False
+
+
+def _budget_notice() -> None:
+    global _BUDGET_NOTICED
+    if not _BUDGET_NOTICED:
+        print(f"  LLM daily budget (${settings.llm_daily_budget_usd:.2f}) reached: rule-based agents until tomorrow")
+        _BUDGET_NOTICED = True
+
+
 async def run_turn(
     gateway: Gateway,
     case_id: str,
@@ -691,6 +703,9 @@ async def run_turn(
     agents: dict | None = None,
 ) -> TurnState:
     configure_tracing()
+    if agents is not None and llm.budget_exhausted():
+        _budget_notice()
+        agents = None  # over today's spend cap: the rule-based agents run the turn
     graph = build_graph(gateway, agents)
     state = {"case_id": case_id, "trigger": trigger, "inbound": inbound, "inbound_channel": inbound_channel, "path": []}
     config = {
