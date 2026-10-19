@@ -8,7 +8,7 @@ import re
 
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import search_window, slot_fits
-from readmit.agents.state import TurnState, request_details, when
+from readmit.agents.state import TurnState, request_details, when, when_es
 
 
 async def care_planner(state: TurnState, gw: Gateway) -> dict:
@@ -120,46 +120,76 @@ def how(mode: str) -> str:
     return "video visit" if mode == "telehealth" else "clinic visit"
 
 
+HOW_ES = {"telehealth": "por video", "in_person": "en la clínica"}
+TEXT = {  # the rule-based writer's templates; also what patients get when the LLM budget runs out
+    "English": {
+        "subject": "Your follow-up visit",
+        "booked": "Hi {name}, your follow-up visit is booked for {when} ({how}).",
+        "no_show": "Hi {name}, we missed you at your visit, and that's okay. Let's find a new time.",
+        "clinic_cancelled": "Hi {name}, we're sorry: the clinic had to cancel your visit. Let's find a new time.",
+        "intro": "Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
+        "after your hospital stay.",
+        "options": "Open times: {options}. Reply with the number that works for you.",
+        "channel_ok": "Thanks {name}, we'll use this channel from now on.",
+        "channel_no": "Thanks {name}. We can't switch to that channel yet; a nurse will help update your contact "
+        "details.",
+        "barrier": "Thanks for telling us, {name}. We can help: a video visit from home is an option, and our team "
+        "can arrange a ride. Would you like us to find a time?",
+        "decline": "Thanks for letting us know, {name}. If you change your mind, just reply to this message.",
+        "question": "Thanks for your question, {name}. A nurse from your care team will follow up with you.",
+        "unclear": "Sorry {name}, we didn't quite understand. Would you like us to book a follow-up visit? "
+        "Reply YES or NO.",
+    },
+    "Spanish": {
+        "subject": "Su visita de seguimiento",
+        "booked": "Hola {name}, su visita de seguimiento está reservada para el {when} ({how}).",
+        "no_show": "Hola {name}, le extrañamos en su visita, no se preocupe. Busquemos una nueva hora.",
+        "clinic_cancelled": "Hola {name}, lo sentimos: la clínica tuvo que cancelar su visita. Busquemos una nueva "
+        "hora.",
+        "intro": "Hola {name}, le escribe su equipo de Orchard Valley. Queremos verle en una visita de seguimiento "
+        "tras su hospitalización.",
+        "options": "Horarios: {options}. Responda con el número que le funcione.",
+        "channel_ok": "Gracias {name}, usaremos este medio desde ahora.",
+        "channel_no": "Gracias {name}. Todavía no podemos usar ese medio; una enfermera le ayudará a actualizar sus "
+        "datos de contacto.",
+        "barrier": "Gracias por contarnos, {name}. Podemos ayudar: una visita por video desde casa es una opción, y "
+        "nuestro equipo puede organizar transporte. ¿Quiere que busquemos una hora?",
+        "decline": "Gracias por avisarnos, {name}. Si cambia de opinión, responda a este mensaje.",
+        "question": "Gracias por su pregunta, {name}. Una enfermera de su equipo le contactará.",
+        "unclear": "Disculpe {name}, no entendimos bien. ¿Quiere que reservemos una visita de seguimiento? "
+        "Responda sí o no.",
+    },
+}
+
+
 async def message_writer(state: TurnState, gw: Gateway) -> dict:
     name = state["summary"]["patient"]["first_name"]
+    lang = state["summary"]["patient"].get("preferred_language")
+    t = TEXT.get(lang, TEXT["English"])
+    spanish = t is TEXT["Spanish"]
+
+    def show(slot):  # Spanish dates in Spanish messages; the output checks read both formats
+        return (when_es(slot["start_at"]) if spanish else slot["when"]), (
+            HOW_ES[slot["mode"]] if spanish else how(slot["mode"])
+        )
+
     sched = state.get("schedule") or {}
     intent = (state.get("intent") or {}).get("intent")
     if sched.get("appointment"):
-        a = sched["appointment"]
-        body = f"Hi {name}, your follow-up visit is booked for {a['when']} ({how(a['mode'])})."
+        w, h = show(sched["appointment"])
+        body = t["booked"].format(name=name, when=w, how=h)
     elif sched.get("offered"):
-        options = "; ".join(f"{i}) {s['when']} ({how(s['mode'])})" for i, s in enumerate(sched["offered"], 1))
-        opening = {
-            "no_show": "We missed you at your visit, and that's okay. Let's find a new time.",
-            "clinic_cancelled": "We're sorry: the clinic had to cancel your visit. Let's find a new time.",
-        }.get((state.get("case") or {}).get("rebook_reason"))
-        body = (
-            f"Hi {name}, {opening[0].lower() + opening[1:]} Open times: {options}. Reply with the number that works."
-            if opening
-            else f"Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
-            f"after your hospital stay. Open times: {options}. Reply with the number that works for you."
-        )
+        options = "; ".join(f"{i}) {w} ({h})" for i, (w, h) in enumerate(map(show, sched["offered"]), 1))
+        opening = t.get((state.get("case") or {}).get("rebook_reason") or "intro") or t["intro"]
+        body = f"{opening.format(name=name)} {t['options'].format(options=options)}"
     elif intent == "channel_change":
         ok = (state.get("channel_change") or {}).get("ok")
-        body = (
-            f"Thanks {name}, we'll use this channel from now on."
-            if ok
-            else f"Thanks {name}. We can't switch to that channel yet; a nurse will help update your contact details."
-        )
-    elif intent == "barrier":
-        body = (
-            f"Thanks for telling us, {name}. We can help: a video visit from home is an option, and our team can "
-            "arrange a ride. Would you like us to find a time?"
-        )
-    elif intent == "decline":
-        body = f"Thanks for letting us know, {name}. If you change your mind, just reply to this message."
-    elif intent == "question":
-        body = f"Thanks for your question, {name}. A nurse from your care team will follow up with you."
+        body = t["channel_ok" if ok else "channel_no"].format(name=name)
+    elif intent in ("barrier", "decline", "question"):
+        body = t[intent].format(name=name)
     else:
-        body = (
-            f"Sorry {name}, we didn't quite understand. Would you like us to book a follow-up visit? Reply YES or NO."
-        )
-    return {"draft": {"subject": "Your follow-up visit", "body": body}}
+        body = t["unclear"].format(name=name)
+    return {"draft": {"subject": t["subject"], "body": body}}
 
 
 async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:

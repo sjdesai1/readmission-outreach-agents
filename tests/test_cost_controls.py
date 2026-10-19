@@ -56,3 +56,10 @@ def test_one_outreach_message_per_patient_per_day():
     assert "C1" not in [c["case_id"] for c in store.due_cases()]  # already messaged today
     store.set_now(datetime(2026, 9, 10, 9, 0))
     assert "C1" in [c["case_id"] for c in store.due_cases()]  # a new day
+
+
+@pytest.mark.usefixtures("pg")
+def test_a_bounced_message_does_not_use_up_the_day():
+    m = store.send_message("C1", "email", "Checking in", "today-bounce")
+    store.delivery_failed(m["message_id"], "email bounced")
+    assert "C1" in [c["case_id"] for c in store.due_cases()]  # never reached her: try another way today

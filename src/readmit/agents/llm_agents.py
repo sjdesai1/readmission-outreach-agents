@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from readmit.agents import stubs
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import slot_fits
-from readmit.agents.state import TurnState, reply_channel, request_details, when
+from readmit.agents.state import TurnState, reply_channel, request_details, when, when_es
 from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 
 # interpret_reply v2: accepts only a specific time, exact time bounds. v3: standing preferences.
@@ -33,9 +33,9 @@ from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 PROMPTS = {
     "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v8",
+    "write_message": "v9",
     "schedule_step": "v2",
-    "review_message": "v2",
+    "review_message": "v3",
 }
 MAX_SCHEDULER_STEPS = 5
 MIN_CONFIDENCE = 0.5
@@ -140,6 +140,14 @@ def _patient_view(state: TurnState) -> dict:
         "risk": s["risk"],
         "standing_preferences": s.get("memory") or {},
     }
+
+
+def _shown(slot: dict, language: str) -> dict:
+    """A slot's time and visit type as the patient reads them: Spanish patients get Spanish dates and labels, so the
+    writer copies them as given and the reviewer sees the same words (the output checks read both formats)."""
+    if language == "Spanish" and slot.get("start_at"):
+        return {"when": when_es(slot["start_at"]), "how": stubs.HOW_ES[slot["mode"]]}
+    return {"when": slot["when"], "how": stubs.how(slot["mode"])}
 
 
 # ------------------------------------------------------------------ reply interpreter (no tools)
@@ -250,8 +258,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         "offered_slots": [
             {
                 "option": i,
-                "when": x["when"],
-                "how": stubs.how(x["mode"]),
+                **_shown(x, s["patient"]["preferred_language"]),
                 "with": x["provider"],
                 "own_doctor": bool(x.get("own_doctor")),
             }
@@ -259,8 +266,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         ],
         "appointment": (
             {
-                "when": sched["appointment"]["when"],
-                "how": stubs.how(sched["appointment"]["mode"]),
+                **_shown(sched["appointment"], s["patient"]["preferred_language"]),
                 "with": sched["appointment"].get("provider"),
                 "video_link_sent_separately": bool(sched["appointment"].get("video_link")),
             }
@@ -462,8 +468,7 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
         "facts": {
             "offered_slots": [
                 {
-                    "when": x["when"],
-                    "how": stubs.how(x["mode"]),
+                    **_shown(x, state["summary"]["patient"]["preferred_language"]),
                     "with": x["provider"],
                     "own_doctor": bool(x.get("own_doctor")),
                 }
@@ -473,8 +478,7 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
             "remembered_this_turn": state.get("remembered") or [],
             "appointment": (
                 {
-                    "when": sched["appointment"]["when"],
-                    "how": stubs.how(sched["appointment"]["mode"]),
+                    **_shown(sched["appointment"], state["summary"]["patient"]["preferred_language"]),
                     "with": sched["appointment"].get("provider"),
                 }
                 if sched.get("appointment")

@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score signals landmark pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn simulate nurse program program-eval
+        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -111,3 +111,7 @@ program:        ## build a 20x program world and run 4 months of outreach (no LL
 
 program-eval:   ## what outreach signals add to the day 7 / 14 re-score, with a learning curve
 	APP_DB_NAME=program LANGSMITH_TRACING=false uv run python -m readmit.model.outreach_signals
+
+# ---- milestone 5: evals ----
+eval-turns:     ## per-turn evals on evals/turns.jsonl (llm=1 for the LLM agents, only=<text> to filter)
+	LANGSMITH_TRACING=false uv run python -m readmit.evals.turns $(if $(llm),--llm) $(if $(only),--only $(only))

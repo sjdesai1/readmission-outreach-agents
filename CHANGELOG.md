@@ -5,6 +5,29 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Added
+- Milestone 5 step 1: per-turn evals (`make eval-turns`, `llm=1` for the LLM agents). 40 cases in
+  evals/turns.jsonl across booking, scheduling, questions, clinical questions, symptoms, emergencies, barriers,
+  opt-out, privacy, abuse, prompt injection, identity, handoff, memory and reminders. Checks intent, route,
+  action, status, nurse task, booking, referral, memory and message content, plus a privacy check on every case.
+  Report by category and by check, saved to data/reports and MLflow (experiment `turn-evals`)
+- The two-patient fixture world moved to src/readmit/evals/fixture.py, shared by the tests and the evals
+- First eval run: rule-based 27/40, LLM 35/40, privacy 40/40 for both. Fixes from the failures:
+  - writer v9: on turns with no new slots, never repeat times from earlier messages (they may be taken; the
+    output check rejected them twice and the turn went to a nurse)
+  - reviewer v3: a good answer isn't failed for not pushing a booking; cost, transport and housing problems are
+    handled with referrals and a kind reply, never escalated
+  - rule-based writer in Spanish too (it is also the over-budget fallback): Jose was getting English
+  - eval case fixed: "short of breath" inside a yes is an emergency (911, no booking), which is right; a milder
+    hidden symptom case added
+  - failure report shows why a turn escalated
+  - Spanish patients: the LLM writer and reviewer get slot times and visit types in Spanish (the reviewer
+    rejected English dates in a Spanish message while the writer was told to copy them exactly)
+
+### Fixed
+- The one-message-a-day rule (0.4.0) also counted bounced messages, so after a bounce no other channel was tried
+  until the next day and a patient with no working channel waited a day for a nurse. Bounces no longer count
+
 ## [0.4.0] - Milestone 4
 
 ### Added
