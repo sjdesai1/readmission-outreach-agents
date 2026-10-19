@@ -55,7 +55,7 @@ def test_yes_books_the_slot_and_confirms():
     s = turn("C2", "yes, the first one works")
     assert s["schedule"]["appointment"]["status"] == "booked"
     assert store.get_case("C2")["status"] == "booked"
-    assert "booked" in outbound("C2")[-1]["body"]
+    assert "reservada" in outbound("C2")[-1]["body"]  # Jose's confirmation is in Spanish, even from the rules
 
 
 def test_stop_closes_the_case_without_any_agent():
@@ -286,4 +286,4 @@ def test_a_barrier_in_a_reply_is_recorded_and_gets_a_ride_referral():
     s = turn("C2", "I don't have a ride to get there")
     assert s["intent"]["intent"] == "barrier" and "transport_barrier" in s["summary"]["risk"]["barriers"]
     assert s["plan"]["referrals_filed"] == ["transport"]
-    assert "ride" in outbound("C2")[-1]["body"]
+    assert "transporte" in outbound("C2")[-1]["body"]

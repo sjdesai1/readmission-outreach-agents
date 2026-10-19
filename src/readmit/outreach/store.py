@@ -1200,7 +1200,8 @@ def add_note(case_id: str, note: str) -> dict:
 def due_cases(limit: int = 500) -> list[dict]:
     """Open cases whose next outreach is due at the simulated now (used by the sequencer, not by agents).
     Booked cases (reminders come later) and cases with a nurse are not outreach-due. At most one AI message a day
-    starts from outreach: a case already messaged today (a reply, a reminder, a rebook) waits until tomorrow."""
+    starts from outreach: a case already messaged today (a reply, a reminder, a rebook) waits until tomorrow.
+    A message that bounced doesn't count: it never reached the patient, so another channel can be tried today."""
     with db.transaction() as c:
         return db.rows(
             c,
@@ -1210,6 +1211,7 @@ def due_cases(limit: int = 500) -> list[dict]:
                                and not exists (
                                    select 1 from outreach.messages m
                                    where m.case_id = k.case_id and m.direction = 'outbound' and m.author = 'ai'
+                                     and m.status <> 'failed'
                                      and m.created_at >= date_trunc('day', cast(:t as timestamp)))
                              order by k.risk desc limit :lim""",
             closed=[*CLOSED_STATUSES, "booked", "escalated"],
