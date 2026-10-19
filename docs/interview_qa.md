@@ -147,3 +147,17 @@ Plant an effect you know, check the method finds it. Without it, a null result c
 
 **Q: Tell me about a bug in the re-scoring.**
 Days-to-fill, censored at the landmark, meant different things on different days. A day-7 model used on day 3 read a missed fill as good news, so no alerts ever fired. A summary table by trigger showed it: missed fills lowered risk. Fixed with yes/no signals and a day-3 model.
+
+## Milestone 4: Simulation and cost
+
+**Q: How do you test a conversational agent end to end without real patients?**
+An hourly simulation: scripted personas reply (engaged, silent, symptomatic, injection attempts, Spanish), visits are attended or missed, the clinic cancels, nurses work the queue, outcomes are drawn at day 30. Seeded, so a run is reproducible and a bug can be replayed.
+
+**Q: How do you know outreach reduces readmissions?**
+Scoring holds out a random 20 percent of flagged patients. Outreach vs holdout is the honest comparison. Attended vs not attended looks better but is self-selected. In the simulation both potential outcomes are known, so each estimate can be graded against the truth. At this size the holdout is too small; about 3,500 per arm would detect the effect.
+
+**Q: How do you control LLM cost?**
+A daily spend cap checked before every call. Over it, the API isn't called and the turn runs on rule-based agents, so patients still get messages and safety rules are untouched. Cached answers stay free. At most one outreach message per patient per day. Every run prints calls, tokens and cost.
+
+**Q: Why fall back to rules instead of stopping?**
+Stopping leaves patients without follow-up, a clinical risk. Escalating everything to nurses turns a cost problem into a staffing problem. The rule-based agents already exist for tests, so degraded mode is tested every CI run.

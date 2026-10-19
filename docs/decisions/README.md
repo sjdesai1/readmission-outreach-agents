@@ -12,3 +12,4 @@ a changed decision gets a new record that supersedes the old one.
 | [0005](0005-versioned-prompts.md) | Prompts are versioned files, never edited in place | Accepted |
 | [0006](0006-scheduler-agent-loop.md) | Scheduler agent: structured action loop over MCP, guarded by code | Accepted |
 | [0007](0007-nurse-handoff.md) | Nurse handoff: honest callback times, and the AI steps back | Accepted |
+| [0008](0008-spend-cap-falls-back-to-rules.md) | Spend cap: over budget, the rule-based agents take over | Accepted |

@@ -1199,14 +1199,19 @@ def add_note(case_id: str, note: str) -> dict:
 
 def due_cases(limit: int = 500) -> list[dict]:
     """Open cases whose next outreach is due at the simulated now (used by the sequencer, not by agents).
-    Booked cases (reminders come later) and cases with a nurse are not outreach-due."""
+    Booked cases (reminders come later) and cases with a nurse are not outreach-due. At most one AI message a day
+    starts from outreach: a case already messaged today (a reply, a reminder, a rebook) waits until tomorrow."""
     with db.transaction() as c:
         return db.rows(
             c,
-            """select case_id, patient_id, status, next_action_at from outreach.cases
-                             where status <> all(:closed) and opened_at <= :t
-                               and (next_action_at is null or next_action_at <= :t)
-                             order by risk desc limit :lim""",
+            """select k.case_id, k.patient_id, k.status, k.next_action_at from outreach.cases k
+                             where k.status <> all(:closed) and k.opened_at <= :t
+                               and (k.next_action_at is null or k.next_action_at <= :t)
+                               and not exists (
+                                   select 1 from outreach.messages m
+                                   where m.case_id = k.case_id and m.direction = 'outbound' and m.author = 'ai'
+                                     and m.created_at >= date_trunc('day', cast(:t as timestamp)))
+                             order by k.risk desc limit :lim""",
             closed=[*CLOSED_STATUSES, "booked", "escalated"],
             t=now(c),
             lim=limit,
