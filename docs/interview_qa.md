@@ -127,3 +127,23 @@ The name is a {first_name} token until the send node; contacts never leave the s
 
 **Q: What does memory remember, and what doesn't it?**
 Only standing preferences from a fixed list (part of day, time bounds, days, visit type), stated by the patient as ongoing. Never symptoms, never one-off requests. Days and time of day combine with each new request.
+
+## Milestone 4: Re-scoring after discharge
+
+**Q: The discharge score is one snapshot. What happens after?**
+Re-scores as information arrives. An ED visit or a missed prescription fill triggers one right away, with a nurse callback if the risk jumps. Days 7, 14 and 21 are a safety net.
+
+**Q: Why a logistic update instead of retraining the model with the new signals?**
+I tried the full refit first. After day 7 only 139 readmissions were left, and XGBoost overfit: the new signals made AUROC worse. Updating the discharge risk with 4 signals needs 6 numbers. Day 7 went from -0.007 to +0.043, CI excluding zero.
+
+**Q: How did you pick the alert threshold?**
+From the data. An ED visit multiplies the odds by 12 or more, so it alerts. A missed fill is about 1.2x, so it re-scores but rarely pages a nurse.
+
+**Q: Did outreach behavior help predict readmission?**
+Not yet. It has no history before the program, so I simulated a program 20x the demo. On the main world: null, because personas there are independent of risk. A simulation only shows what it encodes, so I ran a positive control where silent patients carry real extra risk. The pipeline found it (odds ratio 2.5 vs a true 2.2) and captured most of the possible gain, but the possible gain was one AUROC point: not significant at 1,000 cases. It stays out of the live model until a pre-specified test passes.
+
+**Q: What's a positive control and why run one?**
+Plant an effect you know, check the method finds it. Without it, a null result can't tell "no effect" from "broken pipeline". Mine also exposed an underpowered test and the cost of testing 6 signals instead of 2.
+
+**Q: Tell me about a bug in the re-scoring.**
+Days-to-fill, censored at the landmark, meant different things on different days. A day-7 model used on day 3 read a missed fill as good news, so no alerts ever fired. A summary table by trigger showed it: missed fills lowered risk. Fixed with yes/no signals and a day-3 model.

@@ -50,6 +50,21 @@ each minor version is a finished milestone.
   callback (it doesn't reopen outreach); an event before the case opens is handled when it opens.
   The simulation prints re-scores by trigger with the average risk change and the callbacks created
 
+- Milestone 4 step 7b: outreach signals after the cold start. `make program` builds a 20x hospital in its own
+  database (`program`, the demo is untouched), scores it with the champion, and runs 4 months of outreach with
+  the rule-based agents and in-process MCP servers. Note extraction is simulated at the real extractor's
+  measured error rates (no LLM cost). `make program-eval` compares the day 7 / 14 re-score with and without
+  outreach signals (replied, silent, booked, no-show, barrier, unreachable) by grouped CV, with odds ratios and
+  a learning curve over program size. Result on the main world's rules: no lift (day 7 -0.015, day 14 +0.003,
+  CIs include zero), because personas there are independent of risk: a simulation only reveals what it encodes.
+  `make program control=1` is a positive control where disengaged patients carry extra risk (world option
+  `engagement_risk`, off in the main world, which is unchanged). Program runs turn LangSmith tracing off
+  The evaluation's main test is pre-specified (replied, silent only), reports log-loss gain next to AUROC lift
+  (both with bootstrap CIs), and in the positive control adds an oracle row (the true engagement risk) as the
+  ceiling for any engagement signal
+- docs/05_m4_rescoring.md: re-scoring design, results, the cold-start study and decisions; interview Q&A for M4
+- `outreach.setup.calendar` takes how many slots other patients hold, so a bigger program has room
+
 ### Fixed
 - The step 7a landmark models (full XGBoost refit) overfit the few readmissions left after each landmark and
   lowered AUROC (day 14: -0.022, CI excluding zero); replaced by the prior update above

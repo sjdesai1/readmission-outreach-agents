@@ -30,8 +30,9 @@ TAKEN_BY_OTHERS = 0.70  # most slots already belong to other patients: availabil
 CALENDAR_END = clock.LIVE_END + timedelta(days=45)
 
 
-def calendar(seed: int = 11) -> pd.DataFrame:
-    """30-minute slots, weekdays 9:00-16:30, for each provider, across the live period."""
+def calendar(seed: int = 11, taken_by_others: float = TAKEN_BY_OTHERS) -> pd.DataFrame:
+    """30-minute slots, weekdays 9:00-16:30, for each provider, across the live period. A bigger simulated
+    program (sim/program.py) passes a lower taken_by_others, so the clinic can absorb 20x the patients."""
     rng = np.random.default_rng(seed)
     rows, day = [], clock.LIVE_START
     while day <= CALENDAR_END:
@@ -46,7 +47,7 @@ def calendar(seed: int = 11) -> pd.DataFrame:
                             "start_at": start,
                             "end_at": start + timedelta(minutes=30),
                             "mode": am if start.hour < 12 else pm,
-                            "status": "held_other" if rng.random() < TAKEN_BY_OTHERS else "open",
+                            "status": "held_other" if rng.random() < taken_by_others else "open",
                             "patient_id": None,
                             "appointment_id": None,
                         }
@@ -111,13 +112,13 @@ def wipe_outreach() -> list[str]:
     return tables
 
 
-def main():
+def main(taken_by_others: float = TAKEN_BY_OTHERS):
     db.ensure_schemas()
     with db.engine().begin() as c:  # migrations first: new columns must exist before anything is read
         c.exec_driver_sql((Path(__file__).parent / "schema.sql").read_text())
     # build everything BEFORE wiping: if building fails, the existing outreach data is left untouched
     cases = build_cases()
-    slots = calendar()
+    slots = calendar(taken_by_others=taken_by_others)
     wipe_outreach()
 
     db.write(

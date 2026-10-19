@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score signals landmark pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn simulate nurse
+        outreach-setup mcp-logs inspector turn simulate nurse program program-eval
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -103,3 +103,11 @@ simulate:       ## run outreach over simulated days: make simulate days=14 (llm=
 
 nurse:          ## nurse queue screen at http://localhost:8501 (first time: uv sync --extra dev --extra ui)
 	uv run --extra ui streamlit run src/readmit/nurse/app.py
+
+# ---- milestone 4 step 7b: a bigger program in its own database (`program`), for outreach signals ----
+program:        ## build a 20x program world and run 4 months of outreach (no LLM, no tracing). control=1: positive control
+	APP_DB_NAME=program LANGSMITH_TRACING=false uv run python -m readmit.sim.program build $(if $(patients),--patients $(patients)) $(if $(control),--control)
+	APP_DB_NAME=program LANGSMITH_TRACING=false uv run python -m readmit.sim.program run $(if $(days),--days $(days))
+
+program-eval:   ## what outreach signals add to the day 7 / 14 re-score, with a learning curve
+	APP_DB_NAME=program LANGSMITH_TRACING=false uv run python -m readmit.model.outreach_signals
