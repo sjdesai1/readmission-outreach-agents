@@ -49,8 +49,10 @@ def test_offers_are_stored_in_the_order_the_patient_saw_them():
 def test_the_second_one_books_the_second_slot_they_saw():
     turn("C1")
     second = store.offered_slots("C1")[1]
-    s = turn("C1", "The second one works for me.")
-    assert s["schedule"]["appointment"]["slot_id"] == second["slot_id"]
+    turn("C1", "The second one works for me.")
+    with db.transaction() as c:
+        booked = db.one(c, "select slot_id from outreach.appointments where case_id = 'C1' and status = 'booked'")
+    assert booked["slot_id"] == second["slot_id"]
 
 
 @pytest.mark.usefixtures("pg")

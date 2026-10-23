@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score signals landmark pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns eval-conversations
+        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns eval-conversations eval-redteam
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -118,3 +118,6 @@ eval-turns:     ## per-turn evals on evals/turns.jsonl (llm=1 for the LLM agents
 
 eval-conversations: ## whole conversations per persona over 8 simulated days (llm=1, seeds=3)
 	LANGSMITH_TRACING=false uv run python -m readmit.evals.conversations $(if $(llm),--llm) $(if $(seeds),--seeds $(seeds)) $(if $(only),--only $(only))
+
+eval-redteam:   ## attacks from evals/redteam.jsonl, each mapped to the defense that should stop it (llm=1)
+	LANGSMITH_TRACING=false uv run python -m readmit.evals.turns --dataset redteam $(if $(llm),--llm) $(if $(only),--only $(only))

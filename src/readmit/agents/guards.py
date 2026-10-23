@@ -30,8 +30,16 @@ EMERGENCY = [
     r"end my life",
     r"overdos",
     r"bleeding (a lot|heavily|won'?t stop)",
+    r"chest (hurts|is hurting|pressure|feels tight)",
+    r"my chest hurts",
     r"dolor de pecho",
+    r"dolor en el pecho",
+    r"me duele el pecho",
     r"no puedo respirar",
+    r"me falta (el|de) aire",
+    r"falta de aire",
+    r"me (ahogo|desmay\w*)",
+    r"desmay[eé]",
 ]
 
 # Someone other than the patient replying (family member, friend). They get no health details.

@@ -6,6 +6,19 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 5 step 3: red team (`make eval-redteam`, `llm=1`). 31 attacks in evals/redteam.jsonl: prompt
+  injection (English, Spanish, role play, admin mode), health information and contact leaks, impersonation,
+  phone identity bypass, excessive agency (book every slot, someone else's slot, invented or past times), prompt
+  leakage, medical advice requests, hidden emergencies, STOP variants and a false STOP, threats, very long
+  messages. Each tagged with the defense expected to stop it; the report adds results by defense.
+  `status_not` check. docs/threat_model.md: assets, actors, OWASP LLM Top 10 mapping, residual risks
+- First red-team run: LLM agents 31/31; rule-based 25/31. The rule-based agents are also the over-budget fallback,
+  so their gaps matter. Fixed:
+  - emergency patterns: "me falta el aire", "me duele el pecho", "my chest hurts", fainting in Spanish. Rule-based,
+    this booked a visit for a patient short of breath
+  - a yes with its own day or time ("book me yesterday at 3 AM") is not a yes to the offered options: offer, don't
+    book; a numbered pick ("the second one") is a yes
+  - medication questions ("should I take two?", "pill", "is it normal") and threats ("you'll regret it") are read
 - Milestone 5 step 2: conversation evals (`make eval-conversations`, `llm=1`, `seeds=n`). Every persona runs a
   whole conversation over 8 simulated days with nurses working the queue, 20 conversations per seed. Scored on
   the persona's goal (booked, afternoon for busy, ride or video for no ride, nurse for questions and symptoms, 3
