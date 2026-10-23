@@ -6,6 +6,13 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 5 step 4: program effect (`make effect`, `db=app` for the demo). Outcomes re-rolled 1000 times with
+  the conversations held as they happened; three estimators graded against the simulation's truth: randomized
+  (holdout minus outreach), adjusted for discharge risk (robust standard errors), naive (attended vs not).
+  Bias, spread, CI width, coverage, power, the split's baseline imbalance, and patients per arm needed
+  First run, 20x program (1,317 patients): truth 5.0 points; randomized 5.7 (coverage 97%, power 46%); adjusted
+  6.3 (coverage 95%, power 60%); naive 14.3 against a true attending effect of 8.8 (coverage 48%). 1,234 patients
+  per arm needed for 80% power: the 20% holdout (286) is the bottleneck. Refuses to run with under 10 per arm
 - Milestone 5 step 3: red team (`make eval-redteam`, `llm=1`). 31 attacks in evals/redteam.jsonl: prompt
   injection (English, Spanish, role play, admin mode), health information and contact leaks, impersonation,
   phone identity bypass, excessive agency (book every slot, someone else's slot, invented or past times), prompt
