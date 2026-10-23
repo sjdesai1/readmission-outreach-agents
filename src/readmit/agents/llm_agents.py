@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from readmit.agents import stubs
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import slot_fits
-from readmit.agents.state import TurnState, reply_channel, request_details, when, when_es
+from readmit.agents.state import MAX_REVISIONS, TurnState, reply_channel, request_details, when, when_es
 from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 
 # interpret_reply v2: accepts only a specific time, exact time bounds. v3: standing preferences.
@@ -33,11 +33,12 @@ from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 PROMPTS = {
     "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v9",
+    "write_message": "v10",
     "schedule_step": "v2",
-    "review_message": "v3",
+    "review_message": "v4",
 }
 MAX_SCHEDULER_STEPS = 5
+SAFETY_CHECKS = {"no_medical_advice", "no_private_details", "respectful_tone"}  # these always block
 MIN_CONFIDENCE = 0.5
 
 Intent = Literal[
@@ -331,6 +332,11 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
     """
     if state.get("trigger") != "inbound_reply":
         return await stubs.scheduler(state, gw)  # cheapest path that does the job
+    try:
+        if await stubs.picked_offer(state, gw):  # "the first one": the store knows which slot that was
+            return await stubs.scheduler(state, gw)
+    except ToolFailed:
+        pass
     intent = state.get("intent") or {}
     details = request_details(state)  # this reply on top of standing preferences
     cid = state["case_id"]
@@ -485,6 +491,8 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
                 else None
             ),
             "channel_change": state.get("channel_change"),
+            "talking_points": (state.get("plan") or {}).get("talking_points") or [],
+            "scheduling_note": sched.get("note"),
         },
         "draft": state["draft"],
     }
@@ -502,6 +510,11 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
         verdict = "escalate"
     elif verdict == "escalate":  # anything else gets one rewrite first; a second failure still reaches a nurse
         verdict = "revise"
+    rewritten = state.get("revisions", 0) >= MAX_REVISIONS
+    if rewritten and r.verdict == "revise" and verdict == "revise" and not set(failed) & SAFETY_CHECKS:
+        # the model itself only asked for polish, twice: the facts are already guarded by code, so send it and
+        # keep the reasons for review instead of stopping outreach (a patient without a message is worse)
+        return {"review": {"verdict": "approve", "reasons": [], "advisory": reasons, "failed_checks": failed}}
     return {"review": {"verdict": verdict, "reasons": reasons, "failed_checks": failed}}
 
 

@@ -24,7 +24,7 @@ def test_summary_is_minimum_necessary():
 
 def test_find_slots_skips_taken_too_soon_and_disallowed_telehealth():
     ids = [s["slot_id"] for s in store.find_slots("C2", limit=10)]  # P2 can't do telehealth
-    assert ids == ["S1", "S2"]  # S3 telehealth, S4 under 2h away, S5 taken by someone else
+    assert ids == ["S1", "S2"]  # S3 telehealth, S4 today (offers start 18h out), S5 taken
 
 
 def test_booking_is_idempotent_and_blocks_double_booking():
@@ -294,3 +294,12 @@ def test_a_callback_on_a_finished_case_does_not_reopen_outreach():
     assert store.get_case("C1")["status"] == "completed"
     store.resolve_nurse_task(task["task_id"], "called", hand_back=True)
     assert store.get_case("C1")["status"] == "completed"
+
+
+def test_repeated_review_tasks_tell_the_nurse_to_take_over():
+    for i in range(2):
+        t = store.create_nurse_task("C1", "review", "routine", "draft failed checks twice", f"rv{i}")
+        assert "handle it directly" not in t["reason"]
+        store.resolve_nurse_task(t["task_id"], "looked", hand_back=True)
+    third = store.create_nurse_task("C1", "review", "routine", "draft failed checks twice", "rv2")
+    assert "repeat 3" in third["reason"] and "handle it directly" in third["reason"]

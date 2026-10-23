@@ -193,6 +193,15 @@ async def send(state: TurnState, gw: Gateway) -> dict:
             subject=render(draft["subject"], name) if draft.get("subject") else None,
             idempotency_key=f"{state['turn_key']}:msg",
         )
+        sched = state.get("schedule") or {}
+        if sched.get("offered") and not sched.get("appointment"):  # remember what "the first one" means
+            await gw.call(
+                "scheduling",
+                "record_offers",
+                case_id=cid,
+                slot_ids=[s["slot_id"] for s in sched["offered"]],
+                message_id=msg["message_id"],
+            )
         if intent:
             await gw.call("cases", "add_case_note", case_id=cid, note=f"intent: {intent}")
         if intent == "decline":

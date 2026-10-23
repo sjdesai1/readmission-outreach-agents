@@ -89,3 +89,12 @@ def test_remembered_preferences_combine_with_a_new_request():
     assert ask(afternoons, {"earliest_time": "10:00"}) == {"earliest_time": "10:00"}  # same dimension: reply wins
     assert ask(afternoons, {"mode": "in_person"}) == {"part_of_day": "afternoon", "mode": "in_person"}
     assert ask({"preferred_days": ["Tuesday"]}, {"preferred_days": ["Friday"]}) == {"preferred_days": ["Friday"]}
+
+
+def test_spanish_dates_are_checked_and_tuesday_is_not_march():
+    slots = [{"start_at": "2026-09-15T14:00:00", "mode": "in_person"}]
+    assert (
+        check_draft("Hola {first_name}: 1) mar 15 sep, 2:00 PM (en la clínica). Responda 1.", "sms", slots, None) == []
+    )
+    assert check_draft("Hola {first_name}: 1) jue 24 sep, 2:00 PM. Responda 1.", "sms", slots, None)  # invented
+    assert check_draft("Option 2 may work: Tue Sep 15, 2:00 PM.", "sms", slots, None) == []

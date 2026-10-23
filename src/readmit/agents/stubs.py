@@ -8,7 +8,7 @@ import re
 
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import search_window, slot_fits
-from readmit.agents.state import TurnState, request_details, when, when_es
+from readmit.agents.state import TurnState, picked_option, request_details, when, when_es
 
 
 async def care_planner(state: TurnState, gw: Gateway) -> dict:
@@ -66,11 +66,47 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
     return {"intent": intent}
 
 
+async def picked_offer(state: TurnState, gw: Gateway) -> dict | None:
+    """The option the patient picked from the times we last sent ("the second one"), looked up in the store,
+    not re-searched: the list may have changed since. None if they didn't pick a numbered option."""
+    intent = state.get("intent") or {}
+    if state.get("trigger") != "inbound_reply" or intent.get("intent") != "wants_visit" or not intent.get("accepts"):
+        return None
+    n = picked_option(state.get("inbound"))
+    if n is None:
+        return None
+    offers = await gw.call("scheduling", "get_offered_slots", case_id=state["case_id"]) or []
+    if not offers:
+        return None
+    pick = offers[n - 1] if 1 <= n <= len(offers) else (offers[-1] if n == -1 else None)
+    return {"option": n, "slot": pick}
+
+
 async def scheduler(state: TurnState, gw: Gateway) -> dict:
     case_id, intent = state["case_id"], state.get("intent") or {}
     details = request_details(state)  # this reply on top of standing preferences
     note = None
     try:
+        picked = await picked_offer(state, gw)
+        if picked and picked["slot"] and picked["slot"]["still_open"]:
+            slot = picked["slot"]
+            appointment = await gw.call(
+                "scheduling",
+                "book_appointment",
+                case_id=case_id,
+                slot_id=slot["slot_id"],
+                idempotency_key=f"{state['turn_key']}:book",
+            )
+            appointment["when"] = when(appointment["start_at"])
+            appointment["provider"] = slot["provider"]
+            return {"schedule": {"offered": [], "appointment": appointment, "error": None, "note": None}}
+        if picked:  # they picked a time that's gone (taken, or too soon now): never book a different one for them
+            gone = picked["slot"]
+            note = (
+                f"the time the patient picked ({when(gone['start_at'])}) is no longer open; offer these instead"
+                if gone
+                else f"the patient picked option {picked['option']}, which we didn't offer; offer these"
+            )
         earliest, latest = search_window(details, state["now"])
         found = (
             await gw.call(
@@ -86,8 +122,11 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
         )
         fitting = [s for s in found if not slot_fits(s["start_at"], details)][:3]
         if not fitting:  # nothing matches the request: offer the closest options and say so
-            fitting = await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or []
-            note = "no open times match what the patient asked for; these are the closest options"
+            if note:  # already explaining a picked time that's gone
+                fitting = await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or []
+            else:
+                fitting = await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or []
+                note = "no open times match what the patient asked for; these are the closest options"
         offered = [
             {
                 "slot_id": s["slot_id"],
@@ -127,6 +166,7 @@ TEXT = {  # the rule-based writer's templates; also what patients get when the L
         "booked": "Hi {name}, your follow-up visit is booked for {when} ({how}).",
         "no_show": "Hi {name}, we missed you at your visit, and that's okay. Let's find a new time.",
         "clinic_cancelled": "Hi {name}, we're sorry: the clinic had to cancel your visit. Let's find a new time.",
+        "gone": "Sorry {name}, that time is no longer open. Here are new ones.",
         "intro": "Hi {name}, this is your care team at Orchard Valley. We'd like to see you for a follow-up visit "
         "after your hospital stay.",
         "options": "Open times: {options}. Reply with the number that works for you.",
@@ -146,6 +186,7 @@ TEXT = {  # the rule-based writer's templates; also what patients get when the L
         "no_show": "Hola {name}, le extrañamos en su visita, no se preocupe. Busquemos una nueva hora.",
         "clinic_cancelled": "Hola {name}, lo sentimos: la clínica tuvo que cancelar su visita. Busquemos una nueva "
         "hora.",
+        "gone": "Lo sentimos {name}, esa hora ya no está disponible. Aquí tiene otras.",
         "intro": "Hola {name}, le escribe su equipo de Orchard Valley. Queremos verle en una visita de seguimiento "
         "tras su hospitalización.",
         "options": "Horarios: {options}. Responda con el número que le funcione.",
@@ -180,7 +221,8 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         body = t["booked"].format(name=name, when=w, how=h)
     elif sched.get("offered"):
         options = "; ".join(f"{i}) {w} ({h})" for i, (w, h) in enumerate(map(show, sched["offered"]), 1))
-        opening = t.get((state.get("case") or {}).get("rebook_reason") or "intro") or t["intro"]
+        gone = "no longer open" in (sched.get("note") or "")
+        opening = t["gone"] if gone else t.get((state.get("case") or {}).get("rebook_reason") or "intro") or t["intro"]
         body = f"{opening.format(name=name)} {t['options'].format(options=options)}"
     elif intent == "channel_change":
         ok = (state.get("channel_change") or {}).get("ok")

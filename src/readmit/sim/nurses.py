@@ -49,7 +49,10 @@ def handle(task: dict) -> None:
         except store.StoreError:
             pass  # the call happened; the note just couldn't be sent
     abusive_or_unreachable = task["kind"] == "review" and (
-        "abusive" in task["reason"] or "no channel" in task["reason"] or not allowed
+        "abusive" in task["reason"]
+        or "no channel" in task["reason"]
+        or "handle it directly" in task["reason"]  # the AI keeps failing: the nurse takes the case over
+        or not allowed
     )
     if abusive_or_unreachable:
         console.resolve(task["task_id"], "nurse called; continuing by phone, outreach closed", hand_back=False)

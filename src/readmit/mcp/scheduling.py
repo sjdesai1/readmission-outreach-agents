@@ -48,8 +48,26 @@ def find_slots(
     limit: Annotated[int, Field(ge=1, le=10, description="How many options to return")] = 3,
 ) -> list[dict]:
     """Open follow-up slots this patient can use, soonest first. Telehealth is only offered if the patient
-    consented and has a video device. Slots start at least 2 hours from now."""
+    consented and has a video device. Slots start at least 18 hours from now: patients often reply hours later,
+    so a same-day time is often gone by the time they pick it."""
     return call(store.find_slots, case_id, earliest, latest, mode, part_of_day, limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_offered_slots(case_id: CaseId) -> list[dict]:
+    """The options the patient was last offered, numbered as they saw them, and whether each is still open.
+    Use it when the patient picks one ("the second one")."""
+    return call(store.offered_slots, case_id)
+
+
+@mcp.tool(annotations=WRITES)
+def record_offers(
+    case_id: CaseId,
+    slot_ids: Annotated[list[str], Field(description="slot_ids in the order the patient sees them")],
+    message_id: str | None = None,
+) -> dict:
+    """Record the options just sent to the patient (done by the send step, after the message goes out)."""
+    return call(store.record_offers, case_id, slot_ids, message_id)
 
 
 @mcp.tool(annotations=WRITES)
