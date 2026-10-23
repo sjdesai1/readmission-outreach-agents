@@ -98,3 +98,8 @@ def test_spanish_dates_are_checked_and_tuesday_is_not_march():
     )
     assert check_draft("Hola {first_name}: 1) jue 24 sep, 2:00 PM. Responda 1.", "sms", slots, None)  # invented
     assert check_draft("Option 2 may work: Tue Sep 15, 2:00 PM.", "sms", slots, None) == []
+
+
+def test_more_emergency_phrasings_in_both_languages():
+    for text in ("Me falta el aire desde anoche", "me duele el pecho", "my chest hurts a lot", "me desmayé hoy"):
+        assert screen_inbound(text)["action"] == "emergency", text

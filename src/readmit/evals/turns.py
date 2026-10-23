@@ -66,6 +66,8 @@ def score(expect: dict, facts: dict, case_id: str) -> list[dict]:
             check(k, facts["action"] in (want if isinstance(want, list) else [want]), want, facts["action"])
         elif k == "status":
             check(k, facts["status"] == want, want, facts["status"])
+        elif k == "status_not":
+            check(k, facts["status"] != want, f"not {want}", facts["status"])
         elif k == "nurse":
             task = facts["nurse_task"]
             if want is False:
@@ -167,6 +169,7 @@ async def run_case(case: dict, agents: dict | None) -> dict:
     return {
         "id": case["id"],
         "category": case["category"],
+        "defense": case.get("defense"),
         "passed": all(c["ok"] for c in checks),
         "checks": checks,
         "facts": {k: v for k, v in facts.items() if k != "nurse_task"},
@@ -185,7 +188,12 @@ def summarize(results: list[dict]) -> dict:
     def rate(xs):
         return {"passed": sum(xs), "total": len(xs), "rate": sum(xs) / len(xs) if xs else None}
 
+    by_defense: dict[str, list[bool]] = defaultdict(list)
+    for r in results:
+        if r.get("defense"):
+            by_defense[r["defense"]].append(r["passed"])
     return {
+        "by_defense": {k: rate(v) for k, v in sorted(by_defense.items())},
         "overall": rate([r["passed"] for r in results]),
         "by_category": {k: rate(v) for k, v in sorted(by_cat.items())},
         "by_check": {k: rate(v) for k, v in sorted(by_check.items())},
@@ -214,14 +222,20 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--llm", action="store_true", help="evaluate the LLM agents (default: rule-based)")
     ap.add_argument("--only", help="run only cases whose id or category contains this text")
+    ap.add_argument("--dataset", default="turns", help="evals/<name>.jsonl: turns (default) or redteam")
     args = ap.parse_args()
+    name = args.dataset
     _use_eval_database()
     agents, label, prompts = None, "rule-based", {}
     if args.llm:
         from readmit.agents.llm_agents import LLM_AGENTS, PROMPTS
 
         agents, label, prompts = LLM_AGENTS, "llm", PROMPTS
-    cases = [c for c in load_cases() if not args.only or args.only in c["id"] or args.only in c["category"]]
+    cases = [
+        c
+        for c in load_cases(REPO_ROOT / "evals" / f"{name}.jsonl")
+        if not args.only or args.only in c["id"] or args.only in c["category"]
+    ]
 
     results = []
     for case in cases:
@@ -239,6 +253,10 @@ def main() -> None:
     print("\n  by check")
     for k, v in summary["by_check"].items():
         print(f"    {k:<16} {v['passed']:>2}/{v['total']:<2}")
+    if summary["by_defense"]:
+        print("\n  by defense expected to stop it")
+        for k, v in summary["by_defense"].items():
+            print(f"    {k:<22} {v['passed']:>2}/{v['total']:<2}")
     failed = [r for r in results if not r["passed"]]
     if failed:
         print("\n  failures")
@@ -246,28 +264,32 @@ def main() -> None:
             for c in r["checks"]:
                 if not c["ok"]:
                     print(f"    {r['id']}: {c['check']} expected {c['expected']}, got {c['got']}")
+            if r.get("defense"):
+                print(f"    {r['id']}: should be stopped by: {r['defense']}")
             if r["facts"].get("reason"):
                 print(f"    {r['id']}: why: {r['facts']['reason'][:300]}")
 
     out = REPO_ROOT / "data" / "reports"
     out.mkdir(parents=True, exist_ok=True)
     report = {"agents": label, "prompts": prompts, "summary": summary, "results": results}
-    (out / f"turn_evals_{label}.json").write_text(json.dumps(report, indent=2, default=str))
-    print(f"\n  saved data/reports/turn_evals_{label}.json")
+    file = f"{'turn_evals' if name == 'turns' else name}_{label}.json"
+    (out / file).write_text(json.dumps(report, indent=2, default=str))
+    print(f"\n  saved data/reports/{file}")
 
     import mlflow
 
     mlflow.set_tracking_uri(settings.mlflow_uri)
-    mlflow.set_experiment("turn-evals")
-    with mlflow.start_run(run_name=f"turn evals {label}"):
+    experiment = "turn-evals" if name == "turns" else f"{name}-evals"
+    mlflow.set_experiment(experiment)
+    with mlflow.start_run(run_name=f"{name} {label}"):
         mlflow.log_params({"agents": label, "cases": len(results), **{f"prompt_{k}": v for k, v in prompts.items()}})
         mlflow.log_metric("pass_rate", o["rate"])
         for k, v in summary["by_category"].items():
             mlflow.log_metric(f"cat_{k}", v["rate"])
         for k, v in summary["by_check"].items():
             mlflow.log_metric(f"check_{k}", v["rate"])
-        mlflow.log_dict(report, f"turn_evals_{label}.json")
-    print("  logged to MLflow experiment 'turn-evals'")
+        mlflow.log_dict(report, file)
+    print(f"  logged to MLflow experiment '{experiment}'")
 
 
 if __name__ == "__main__":

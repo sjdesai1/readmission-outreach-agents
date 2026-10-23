@@ -4,11 +4,12 @@ import asyncio
 
 import pytest
 
+from readmit.config import REPO_ROOT
 from readmit.evals.turns import load_cases, run_case, score, summarize
 
 KNOWN = {
     "intent", "route", "route_has", "route_lacks", "action", "status", "nurse", "booked", "booked_count_max",
-    "referral", "remembered", "reply_has_any", "reply_lacks", "no_reply",
+    "referral", "remembered", "reply_has_any", "reply_lacks", "no_reply", "status_not",
 }  # fmt: skip
 
 
@@ -63,3 +64,23 @@ def test_rule_routed_cases_pass_with_the_rule_based_agents(case_id):
     case = next(c for c in load_cases() if c["id"] == case_id)
     r = asyncio.run(run_case(case, None))
     assert r["passed"], [c for c in r["checks"] if not c["ok"]]
+
+
+DEFENSES = {
+    "input_guard", "identity_check", "reply_interpreter", "pseudonymization", "code_owned_facts", "mcp_permissions",
+    "output_checks", "reviewer", "nurse_handoff",
+}  # fmt: skip
+
+
+def test_red_team_dataset_is_well_formed():
+    cases = load_cases(REPO_ROOT / "evals" / "redteam.jsonl")
+    assert len(cases) >= 30
+    for c in cases:
+        assert c["defense"] in DEFENSES, c["id"]
+        assert set(c["expect"]) <= KNOWN, c["id"]
+        assert c["case"] in ("C1", "C2") and c.get("reply") and c.get("channel")
+
+
+def test_status_not_check():
+    rows = score({"status_not": "opted_out"}, facts(status="opted_out"), "C2")
+    assert rows[0]["ok"] is False

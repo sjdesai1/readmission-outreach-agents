@@ -40,12 +40,23 @@ async def care_planner(state: TurnState, gw: Gateway) -> dict:
     return {"plan": plan}
 
 
+SPECIFIC_TIME = (
+    r"\b(yesterday|today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|"
+    r"afternoon|evening|\d{1,2}\s*(am|pm)|\d{1,2}:\d{2}|dr\.?|ayer|hoy|mañana|lunes|martes|miércoles|jueves|viernes|"
+    r"sábado|domingo|tarde|noche)\b"
+)
 STUB_INTENTS = [  # keyword rules, first match wins: enough for free simulation runs, not for production
     ("symptom", r"\b(swollen|swelling|hinchad\w*|dizzy|mareado|fever|fiebre|short of breath)\b"),
-    ("clinical_question", r"\b(can i take|medication|medicine|pills|dose|pastillas|medicina)\b"),
+    (
+        "clinical_question",
+        (
+            r"\b(can i take|should i (take|stop|skip|double)|is (it|this) normal|medications?|medicine|pills?|doses?|"
+            r"pastillas|medicina|dosis)\b"
+        ),
+    ),
     ("barrier", r"\b(ride|transport\w*|no car|can'?t get there)\b"),
     ("wants_human", r"\b(nurse|real person|call me|enfermera)\b"),
-    ("abusive", r"\b(useless|idiots?|stupid)\b"),
+    ("abusive", r"\b(useless|idiots?|stupid|regret it|hurt (you|someone|somebody)|kill (you|someone))\b"),
 ]
 
 
@@ -55,8 +66,12 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
         if re.search(pattern, t):
             details = {"barrier": (state.get("inbound") or "")[:200]} if name == "barrier" else {}
             return {"intent": {"intent": name, "accepts": False, "details": details}}
-    if re.search(r"\b(yes|book|sure|ok|okay|first|works|sí|si|primera|primero)\b", t):
+    if picked_option(t) is not None:  # "the second one", "2"
         intent = {"intent": "wants_visit", "accepts": True, "details": {}}
+    elif re.search(r"\b(yes|book|sure|ok|okay|first|works|sí|si|primera|primero)\b", t):
+        # a yes with its own time or day ("book me yesterday at 3 AM") is not a yes to our options: offer, don't book
+        accepts = picked_option(t) is not None or not re.search(SPECIFIC_TIME, t)
+        intent = {"intent": "wants_visit", "accepts": accepts, "details": {}}
     elif re.search(r"\b(no thanks|not interested|don'?t need)\b", t):
         intent = {"intent": "decline", "accepts": False, "details": {}}
     elif "?" in t:
