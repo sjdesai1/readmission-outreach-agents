@@ -33,7 +33,7 @@ from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 PROMPTS = {
     "interpret_reply": "v5",
     "plan_care": "v1",
-    "write_message": "v10",
+    "write_message": "v11",  # A/B vs v10: 7% fewer words, rewrites 15% -> 6%, no case lost
     "schedule_step": "v2",
     "review_message": "v4",
 }
