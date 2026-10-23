@@ -6,6 +6,14 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 5 step 5: prompt A/B test (`make ab`, any `task`, `a`, `b`). Both versions answer the same turn and
+  red-team cases; primary metric pass rate (exact McNemar on disagreeing cases), secondary words per message,
+  reading grade, rewrites and reviewer advisories (paired bootstrap CI, Wilcoxon). Candidate writer v11: brief by
+  rule (SMS under 220 characters, email under 60 words, no filler). Turn eval facts now include the draft, rewrites
+  and advisories
+- A/B result, write_message v10 vs v11, 72 paired cases: pass rate 99% vs 100% (no case lost, McNemar p = 1.0);
+  words per message 41.6 -> 38.7 (95% CI -5.0 to -1.0, p = 0.008); reading grade unchanged (4.3 vs 4.1);
+  rewrites 15% -> 6% (CI -24% to +6%, not significant). v11 is now the live writer
 - Milestone 5 step 4: program effect (`make effect`, `db=app` for the demo). Outcomes re-rolled 1000 times with
   the conversations held as they happened; three estimators graded against the simulation's truth: randomized
   (holdout minus outreach), adjusted for discharge risk (robust standard errors), naive (attended vs not).

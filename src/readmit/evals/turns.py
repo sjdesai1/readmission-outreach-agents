@@ -145,6 +145,9 @@ def _facts(case_id: str, state: dict, sent_before: set, tasks_before: set) -> di
         "referrals": referrals,
         "memory": memory,
         "sent": sent,
+        "writer_calls": (state.get("path") or []).count("message_writer"),  # 2 = the first draft was sent back
+        "advisory": bool((state.get("review") or {}).get("advisory")),
+        "drafted": (state.get("draft") or {}).get("body") if "message_writer" in (state.get("path") or []) else None,
     }
 
 
