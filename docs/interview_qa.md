@@ -161,3 +161,26 @@ A daily spend cap checked before every call. Over it, the API isn't called and t
 
 **Q: Why fall back to rules instead of stopping?**
 Stopping leaves patients without follow-up, a clinical risk. Escalating everything to nurses turns a cost problem into a staffing problem. The rule-based agents already exist for tests, so degraded mode is tested every CI run.
+
+## Milestone 5: Evals, red team, effect, A/B, monitoring
+
+**Q: How do you evaluate an agent system?**
+Three levels. Single turns check each decision (41 cases). Whole conversations over simulated days check that decisions add up (20 personas). A red team checks attacks (31, mapped to OWASP's LLM Top 10). Each level found bugs the others couldn't.
+
+**Q: Give an example of a bug only the conversation evals found.**
+Spanish messages offering a Tuesday slot never sent: "mar 15 sep" (martes) was read as March 15 by the date check. The draft failed, went to a nurse, came back, failed again: up to 21 nurse tasks per conversation. Single-turn cases never had a Tuesday slot. Fixed the date check, added a circuit breaker after three failures, wrote a postmortem.
+
+**Q: What did the red team find?**
+The LLM path held on all 31 attacks. The rule-based fallback, which runs when the LLM budget is spent, booked a visit for a Spanish-speaking patient reporting shortness of breath instead of sending 911. Spanish breathlessness phrases were added to the input guard, which runs before any agent.
+
+**Q: Does the outreach work?**
+In the simulation, yes: 5 points fewer readmissions. But a real program this size would see a non-significant result half the time; it needs about 1,234 patients per arm and the 20% holdout has 286. The naive attended-vs-not comparison reported 14 points and was wrong half the time, because attenders were healthier.
+
+**Q: How do you decide whether a prompt change ships?**
+A paired A/B on the same 72 cases, with the hypothesis and the primary metric fixed before running. Primary: no case lost (McNemar). Secondary: length, reading grade, rewrites. Writer v11: no case lost, 7% shorter (CI excluding zero), fewer rewrites as a trend. Shipped.
+
+**Q: What do you monitor?**
+LLM spend against the daily cap, failures and latency by task, the nurse queue and overdue promises, and cases the AI keeps failing on. Two alerts go to email with runbook links. On its first live evaluation the failing-case alert found 40 cases left by a run before the fixes.
+
+**Q: Why evaluate the rule-based fallback at all?**
+It's what patients get when the budget runs out or the LLM is down. The red team showed the fallback had the only real safety gap.

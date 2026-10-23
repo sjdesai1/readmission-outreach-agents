@@ -102,6 +102,14 @@ What it means
 Fix
 - Nothing for one-offs; many in a day from one channel means the provider (or Mailpit) is down: `make smoke`
 
+## A container won't restart after files changed
+
+`docker compose restart` reuses the old bind mount; after a branch switch or pull replaced a mounted folder (e.g. docker/grafana) it fails with "error mounting ... no such file or directory". Recreate instead:
+
+```bash
+docker compose up -d --force-recreate grafana
+```
+
 ## Useful commands
 
 ```bash
