@@ -29,6 +29,7 @@ class Settings:
     smtp_port: int = field(default_factory=lambda: int(_env("SMTP_PORT", "1025")))
     mailpit_api: str = field(default_factory=lambda: _env("MAILPIT_API_URL", "http://localhost:8025"))
     airflow_api: str = field(default_factory=lambda: _env("AIRFLOW_API_URL", "http://localhost:8080"))
+    grafana_url: str = field(default_factory=lambda: _env("GRAFANA_URL", "http://localhost:3000"))
     # MCP servers (agents reach the outreach system only through these)
     mcp_host: str = field(default_factory=lambda: _env("MCP_HOST", "localhost"))
     # LLM

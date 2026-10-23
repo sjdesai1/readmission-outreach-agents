@@ -1,0 +1,95 @@
+# Two alerts. Each has a runbook entry: docs/runbook.md
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: oncall-email
+    receivers:
+      - uid: oncall-email
+        type: email
+        settings:
+          addresses: oncall@orchardvalley.example   # lands in Mailpit: http://localhost:8025
+
+policies:
+  - orgId: 1
+    receiver: oncall-email
+    group_by: [alertname]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: outreach
+    folder: Outreach
+    interval: 1m
+    rules:
+      - uid: llm-spend-near-cap
+        title: LLM spend above 80% of the daily cap
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "Real LLM calls today cost {{ $values.B }} USD, over 80% of the $1.00 cap. At the cap, agents switch to rules."
+          runbook_url: https://github.com/sjdesai1/readmission-outreach-agents/blob/main/docs/runbook.md#llm-spend-near-the-daily-cap
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: app-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                select coalesce(sum(cost_usd), 0)::float as spend_usd from ops.llm_calls
+                where not cached and ts >= date_trunc('day', now())
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.8]}
+
+      - uid: ai-failing-on-a-case
+        title: AI keeps failing on a case
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: "Case {{ $labels.case_id }} has {{ $values.B }} review tasks: the AI keeps failing on it and a nurse has to take it over."
+          runbook_url: https://github.com/sjdesai1/readmission-outreach-agents/blob/main/docs/runbook.md#ai-keeps-failing-on-a-case
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: app-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                select case_id, count(*)::float as review_tasks from outreach.nurse_tasks
+                where kind = 'review' group by case_id having count(*) >= 3
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [2]}

@@ -1,0 +1,16 @@
+# The app database, read by the dashboard and the alert rules. Read-only use: Grafana only runs selects.
+apiVersion: 1
+datasources:
+  - name: app
+    uid: app-pg
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    user: postgres
+    isDefault: true
+    jsonData:
+      database: app
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: $POSTGRES_PASSWORD
