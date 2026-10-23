@@ -83,6 +83,21 @@ def airflow():
     return f"scheduler {status}"
 
 
+@check("grafana dashboard + alert rules")
+def grafana():
+    r = requests.get(f"{settings.grafana_url}/api/health", timeout=TIMEOUT)
+    r.raise_for_status()
+    dash = requests.get(f"{settings.grafana_url}/api/dashboards/uid/outreach", timeout=TIMEOUT)
+    dash.raise_for_status()
+    rules = requests.get(f"{settings.grafana_url}/api/v1/provisioning/alert-rules", timeout=TIMEOUT)
+    rules.raise_for_status()
+    titles = sorted(x["title"] for x in rules.json())
+    assert len(titles) >= 2, f"expected 2 alert rules, found {titles}"
+    return (
+        f"grafana {r.json().get('version')}, dashboard '{dash.json()['dashboard']['title']}', {len(titles)} alert rules"
+    )
+
+
 @check("gemini key + models")
 def gemini_models():
     if not settings.gemini_api_key:
@@ -140,7 +155,7 @@ def langsmith_key():
 
 
 def main() -> int:
-    for fn in (postgres, mlflow_check, mailpit, airflow, gemini_models, gemini_call, langsmith_key):
+    for fn in (postgres, mlflow_check, mailpit, airflow, grafana, gemini_models, gemini_call, langsmith_key):
         fn()
     width = max(len(n) for n, _, _ in results)
     print()

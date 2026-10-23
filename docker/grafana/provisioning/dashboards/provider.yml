@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: outreach
+    folder: Outreach
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false   # the JSON in the repo is the source of truth; edit it there
+    options:
+      path: /etc/grafana/dashboards

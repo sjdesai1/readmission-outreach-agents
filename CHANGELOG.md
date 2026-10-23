@@ -6,6 +6,12 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 5 step 6: monitoring. Grafana in docker compose (http://localhost:3000, no login locally) with the
+  data source, the "Outreach operations" dashboard and the alert rules provisioned from docker/grafana. Panels:
+  LLM spend vs the cap, calls and failures per hour, cost and p95 latency by task, open and overdue nurse tasks,
+  tasks by kind, cases the AI keeps failing on, case status, funnel, messages by channel, bounces and opt-outs,
+  re-scores by trigger. Alerts, emailed to Mailpit: spend over 80% of the daily cap; a case with 3+ review tasks.
+  docs/runbook.md: each alert, plus nurse backlog, MCP servers down, bounces. `make smoke` checks Grafana too
 - Milestone 5 step 5: prompt A/B test (`make ab`, any `task`, `a`, `b`). Both versions answer the same turn and
   red-team cases; primary metric pass rate (exact McNemar on disagreeing cases), secondary words per message,
   reading grade, rewrites and reviewer advisories (paired bootstrap CI, Wilcoxon). Candidate writer v11: brief by

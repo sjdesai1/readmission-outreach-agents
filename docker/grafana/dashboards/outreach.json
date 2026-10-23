@@ -1,0 +1,503 @@
+{
+  "uid": "outreach",
+  "title": "Outreach operations",
+  "tags": [
+    "outreach"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "LLM cost and reliability (real time)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "title": "Spend today vs $1.00 cap",
+      "type": "gauge",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "Real (uncached) LLM calls today. At the cap the agents switch to rules (ADR 0008). Alert at 80%.",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select coalesce(sum(cost_usd), 0) as spend from ops.llm_calls where not cached and ts >= date_trunc('day', now())"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "min": 0,
+          "max": 1,
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "LLM calls per hour",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "Cache hits are free; failures fall back to rules or to the second model.",
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "select date_trunc('hour', ts) as time, count(*) filter (where not cached and ok) as real_calls, count(*) filter (where cached) as cache_hits, count(*) filter (where not ok) as failures from ops.llm_calls where $__timeFilter(ts) group by 1 order by 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Calls, cost and latency by task (selected range)",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select task, prompt_version, count(*) filter (where not cached) as real_calls, count(*) filter (where cached) as cached, count(*) filter (where not ok) as failed, round(coalesce(sum(cost_usd),0)::numeric, 4) as cost_usd, percentile_cont(0.95) within group (order by latency_ms) filter (where not cached) as p95_ms from ops.llm_calls where $__timeFilter(ts) group by 1, 2 order by cost_usd desc"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Nurses (current state)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 6,
+      "title": "Open nurse tasks by priority",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "Urgent tasks are due within the hour.",
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 6,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select priority, count(*) as tasks from outreach.nurse_tasks where status = 'open' group by 1 order by 1"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 7,
+      "title": "Overdue open tasks",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "Due time already passed on the simulation clock: the promise to the patient is broken.",
+      "gridPos": {
+        "x": 6,
+        "y": 9,
+        "w": 4,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select count(*) as overdue from outreach.nurse_tasks t, outreach.sim_clock c where t.status = 'open' and t.due_at < c.now"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Tasks by kind",
+      "type": "barchart",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 10,
+        "y": 9,
+        "w": 7,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select kind, count(*) filter (where priority = 'urgent') as urgent, count(*) filter (where priority = 'routine') as routine from outreach.nurse_tasks group by 1 order by 1"
+        }
+      ],
+      "options": {
+        "stacking": "normal",
+        "xField": "kind"
+      }
+    },
+    {
+      "id": 9,
+      "title": "Cases the AI keeps failing on (3+ review tasks alerts)",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 17,
+        "y": 9,
+        "w": 7,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select case_id, count(*) as review_tasks, max(created_at) as last from outreach.nurse_tasks where kind = 'review' group by 1 order by 2 desc limit 10"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Outreach program (simulation clock)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "title": "Cases by status",
+      "type": "barchart",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select status, count(*) as cases from outreach.cases group by 1 order by 2 desc"
+        }
+      ],
+      "options": {
+        "xField": "status",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": 12,
+      "title": "Funnel",
+      "type": "bargauge",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 8,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select 'opened' as step, count(*) as cases from outreach.cases union all select 'messaged', count(distinct case_id) from outreach.messages where direction = 'outbound' and author = 'ai' union all select 'replied', count(distinct case_id) from outreach.messages where direction = 'inbound' union all select 'booked', count(distinct case_id) from outreach.appointments union all select 'attended', count(distinct case_id) from outreach.appointments where status = 'completed'"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "AI messages per simulated day, by channel",
+      "type": "barchart",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 16,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select to_char(date_trunc('day', created_at), 'MM-DD') as day, count(*) filter (where channel = 'sms') as sms, count(*) filter (where channel = 'email') as email, count(*) filter (where channel = 'portal') as portal, count(*) filter (where channel = 'phone') as phone from outreach.messages where direction = 'outbound' and author = 'ai' group by 1 order by 1"
+        }
+      ],
+      "options": {
+        "stacking": "normal",
+        "xField": "day"
+      }
+    },
+    {
+      "id": 14,
+      "title": "Delivery problems and opt-outs",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select (select count(*) from outreach.messages where status = 'failed') as bounced, (select count(*) from outreach.cases where status = 'opted_out') as opted_out, (select count(*) from outreach.cases where status = 'readmitted') as readmitted"
+        }
+      ],
+      "options": {
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Re-scores by trigger",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-pg"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select detail->>'trigger' as trigger, count(*) as rescores, round(avg((detail->>'before')::numeric), 3) as avg_before, round(avg((detail->>'after')::numeric), 3) as avg_after from outreach.events where type = 'rescored' group by 1 order by 1"
+        }
+      ]
+    }
+  ],
+  "description": "LLM cost and reliability, the nurse queue, and the outreach program. Source of truth: docker/grafana/dashboards/outreach.json"
+}
