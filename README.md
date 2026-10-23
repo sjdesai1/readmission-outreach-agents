@@ -19,7 +19,7 @@ v1: working end to end. v2: see the roadmap below.
 | 2 | MCP servers: patient data, scheduling, messaging, referrals, case store | done |
 | 3 | Multi-agent system in LangGraph: 5 agents, rule nodes, guardrails, nurse handoff, memory, tracing | done |
 | 4 | Conversation loop: simulated days, scripted patients, appointments, nurse queue, outcomes and holdout, re-scoring, cost controls | done |
-| 5 | Evals: per turn, per conversation, guardrails, red team, outcomes, prompt A/B | |
+| 5 | Evals: per turn, per conversation, red team and threat model, program effect, prompt A/B, Grafana monitoring | done |
 | 6 | LLM judge and judge assessment | |
 | 7 | Timeline viewer, `make demo` | |
 
@@ -52,9 +52,19 @@ make signals && make landmark                    # post-discharge signals, re-sc
 make program && make program-eval                # 20x program in its own database: outreach-signal study
 ```
 
+Milestone 5: evals and monitoring
+```bash
+make eval-turns llm=1 && make eval-conversations llm=1 && make eval-redteam llm=1
+make effect             # program effect vs the truth (20x program; db=app for the demo)
+make ab                 # prompt A/B, paired (task=, a=, b=)
+```
+Dashboard and alerts: http://localhost:3000 · runbook: [docs/runbook.md](docs/runbook.md) · threat model: [docs/threat_model.md](docs/threat_model.md)
+
 ## Roadmap (v2)
 
 - Uplift model: a causal forest (EconML) on the randomized holdout data, to rank patients by how much outreach helps them, not only by risk
 - PCP notifications: a daily digest to each patient's primary care doctor when a patient crosses a risk threshold or has an ED visit; deduplicated, LLM summary checked against the facts, measured by open rate and visit attendance
 - Learning sequencer: a bandit choosing channel and timing per patient
 - Cost: cheaper model routing per agent, prompt caching, batch overnight work
+- Self-hosted inference: vLLM serving an open 7-8B model; per-agent routing between it and Gemini decided by the evals; structured output, prefix caching, load tests, serving metrics on the Grafana dashboard
+- Language: patient-set language preference (asked, never switched silently), Spanish STOP words in the guard, translated view and interpreter flag on the nurse screen, more languages

@@ -2,7 +2,7 @@
 
 Scope: the outreach system. Patients' messages come in on SMS, email, portal and phone; agents decide and act through MCP servers over the case store. The risk model (milestone 1) is out of scope here.
 
-Tested by `make eval-redteam` (evals/redteam.jsonl): every attack below is a case, tagged with the defense expected to stop it. Results in [05_m5_evals.md](05_m5_evals.md).
+Tested by `make eval-redteam` (evals/redteam.jsonl): every attack below is a case, tagged with the defense expected to stop it. Results in [07_m5_evals.md](07_m5_evals.md).
 
 ## What needs protecting
 

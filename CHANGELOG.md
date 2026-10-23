@@ -5,7 +5,12 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+## [0.5.0] - Milestone 5
+
 ### Added
+- docs/07_m5_evals.md: results and findings for every M5 step; interview Q&A for M5; README: milestone 5 done,
+  commands, v2 roadmap adds self-hosted inference (vLLM) and language preference; runbook: recreate a container
+  whose mounted files changed
 - Milestone 5 step 6: monitoring. Grafana in docker compose (http://localhost:3000, no login locally) with the
   data source, the "Outreach operations" dashboard and the alert rules provisioned from docker/grafana. Panels:
   LLM spend vs the cap, calls and failures per hour, cost and p95 latency by task, open and overdue nurse tasks,
