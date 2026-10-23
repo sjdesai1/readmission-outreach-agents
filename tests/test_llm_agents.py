@@ -434,3 +434,21 @@ def test_agents_see_which_messages_a_nurse_wrote():
         {"direction": "outbound", "author": "nurse", "channel": "sms", "at": "2026-09-09 11:00:00", "body": "c"},
     ]
     assert [m["from"] for m in llm_agents._conversation({"thread": thread})] == ["care team", "patient", "nurse"]
+
+
+def test_polish_only_reviews_dont_stop_outreach(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    nitpick = {"verdict": "revise", "reasons": ["Option 3 doesn't name the doctor."], "checks": {}}
+    answers["review_message"] = nitpick
+    s = turn("C1")
+    assert s["outcome"]["action"] == "sent" and s["review"]["advisory"] == ["Option 3 doesn't name the doctor."]
+    assert s["path"].count("message_writer") == 2  # one rewrite was still tried
+
+
+def test_safety_failures_still_block_after_a_rewrite(fake_llm):
+    answers, _ = fake_llm
+    answers["plan_care"], answers["write_message"] = PLAN, offer
+    answers["review_message"] = {"verdict": "revise", "reasons": ["Mentions the hospital stay in detail."],
+                                 "checks": {"no_private_details": False}}  # fmt: skip
+    assert turn("C1")["outcome"]["action"] == "escalated"

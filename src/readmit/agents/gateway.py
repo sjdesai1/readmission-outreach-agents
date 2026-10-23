@@ -25,6 +25,7 @@ ACCESS: dict[str, set[str]] = {
     "scheduler": {
         "scheduling.get_current_time",
         "scheduling.find_slots",
+        "scheduling.get_offered_slots",
         "scheduling.book_appointment",
         "scheduling.reschedule_appointment",
     },
@@ -33,6 +34,7 @@ ACCESS: dict[str, set[str]] = {
     "send": {
         "patient_data.get_patient_summary",
         "messaging.send_message",
+        "scheduling.record_offers",
         "cases.update_case_status",
         "cases.add_case_note",
     },

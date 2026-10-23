@@ -47,11 +47,13 @@ CASE_STATUSES = (
 )
 CLOSED_STATUSES = ("suppressed", "completed", "opted_out", "readmitted", "closed")
 MIN_LEAD = timedelta(hours=2)  # can't book a slot starting in less than 2 hours
+OFFER_LEAD = timedelta(hours=18)  # offered times start tomorrow or later: patients often reply hours after
 QUIET_HOURS = (20, 8)  # no outreach from 8 PM to 8 AM (patient's local time)
 FAST_FOLLOW_UP = {"Heart failure": 7, "COPD exacerbation": 7, "Acute MI": 7, "Sepsis": 7}  # days; others 14
 PRIORITIES = ("normal", "safety")
 MAX_IDENTITY_ATTEMPTS = 3
 NURSE_KINDS = ("emergency", "symptom", "clinical_question", "callback", "review")
+REVIEW_REPEAT_LIMIT = 2  # after this many review tasks on one case, the next one says: handle it directly
 NURSE_DAILY_CAPACITY = 20  # routine callbacks per business day (2 nurses x ~10)
 URGENT_WITHIN = timedelta(hours=1)
 MEMORY_KEYS = ("part_of_day", "earliest_time", "latest_time", "mode", "preferred_days")
@@ -218,7 +220,7 @@ def find_slots(
             raise StoreError(f"case {case_id} not found")
         if mode == "telehealth" and not summary_ok["tele_ok"]:
             raise StoreError("this patient has not consented to telehealth or has no video device; offer in-person")
-        start = max(t + MIN_LEAD, datetime.fromisoformat(earliest)) if earliest else t + MIN_LEAD
+        start = max(t + OFFER_LEAD, datetime.fromisoformat(earliest)) if earliest else t + OFFER_LEAD
         end = datetime.fromisoformat(latest) if latest else start + timedelta(days=14)
         hours = {"morning": (0, 12), "afternoon": (12, 24)}.get(part_of_day, (0, 24))
         modes = [mode] if mode else (["in_person", "telehealth"] if summary_ok["tele_ok"] else ["in_person"])
@@ -247,6 +249,53 @@ def find_slots(
     return [
         {k: v for k, v in r.items() if k != "provider_id"} | {"start_at": r["start_at"].isoformat(timespec="minutes")}
         for r in found[:limit]
+    ]
+
+
+def record_offers(case_id: str, slot_ids: list[str], message_id: str | None = None) -> dict:
+    """The options just sent to the patient, numbered as they saw them. Replaces any earlier offer."""
+    if not slot_ids:
+        raise StoreError("no slots to record")
+    with db.transaction() as c:
+        _case(c, case_id)
+        t = now(c)
+        db.rows(c, "delete from outreach.offers where case_id = :id", id=case_id)
+        for n, sid in enumerate(slot_ids, 1):
+            db.rows(
+                c,
+                """insert into outreach.offers (case_id, option, slot_id, offered_at, message_id)
+                   values (:id, :n, :s, :t, :m)""",
+                id=case_id,
+                n=n,
+                s=sid,
+                t=t,
+                m=message_id,
+            )
+    return {"case_id": case_id, "options": len(slot_ids)}
+
+
+def offered_slots(case_id: str) -> list[dict]:
+    """What the patient was last offered, in their numbering, and whether each slot can still be booked."""
+    with db.transaction() as c:
+        t = now(c)
+        rows = db.rows(
+            c,
+            """select o.option, o.slot_id, s.start_at, s.mode, s.status, p.name as provider
+               from outreach.offers o join outreach.slots s using (slot_id)
+               join outreach.providers p on p.provider_id = s.provider_id
+               where o.case_id = :id order by o.option""",
+            id=case_id,
+        )
+    return [
+        {
+            "option": r["option"],
+            "slot_id": r["slot_id"],
+            "start_at": r["start_at"].isoformat(timespec="minutes"),
+            "mode": r["mode"],
+            "provider": r["provider"],
+            "still_open": r["status"] == "open" and r["start_at"] >= t + MIN_LEAD,
+        }
+        for r in rows
     ]
 
 
@@ -1056,6 +1105,12 @@ def create_nurse_task(
             return {**_task_view(existing), "note": "already created by an earlier identical request"}
         case = _case(c, case_id, lock=True, acting=True)
         t = now(c)
+        if kind == "review":  # circuit breaker: the AI keeps failing on this case, so say it plainly
+            earlier = db.one(
+                c, "select count(*) as n from outreach.nurse_tasks where case_id = :id and kind = 'review'", id=case_id
+            )["n"]
+            if earlier >= REVIEW_REPEAT_LIMIT:
+                reason = f"{reason} [repeat {earlier + 1}: the AI keeps failing on this case; handle it directly]"
         if kind == "emergency":
             due = t  # now: the patient was already told to call 911
         elif priority == "urgent":

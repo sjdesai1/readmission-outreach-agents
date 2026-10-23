@@ -37,6 +37,8 @@ def test_each_server_exposes_only_its_own_tools():
         "find_slots",
         "get_appointment",
         "get_current_time",
+        "get_offered_slots",
+        "record_offers",
         "reschedule_appointment",
     ]
     assert tool_names(messaging) == ["get_thread", "send_message"]

@@ -99,7 +99,17 @@ MONTHS = {
     "noviembre": 11,
     "diciembre": 12,
 }
-DATE_EN_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b", re.IGNORECASE)
+ES_MONTH_SHORT = {"ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6, "jul": 7, "ago": 8, "sep": 9, "set": 9,
+                  "oct": 10, "nov": 11, "dic": 12}  # fmt: skip
+_ES_SHORT = "|".join(ES_MONTH_SHORT)
+# "Sep 10". Not "mar 15 sep": that is Spanish (martes 15 de septiembre), and "mar" there is Tuesday, not March
+DATE_EN_RE = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b(?!\s+(?:" + _ES_SHORT + r")\b)",
+    re.IGNORECASE,
+)
+DATE_ES_SHORT_RE = re.compile(  # "jue 10 sep" (when_es format); the weekday keeps "option 2 may" from matching
+    r"\b(?:lun|mar|mi[eé]|jue|vie|s[aá]b|dom)\.?\s+(\d{1,2})\s+(" + _ES_SHORT + r")\b", re.IGNORECASE
+)
 DATE_ES_RE = re.compile(r"\b(\d{1,2}) de (" + "|".join(k for k in MONTHS if len(k) > 3) + r")\b", re.IGNORECASE)
 BOOKED_CLAIM_RE = re.compile(
     r"\b(you'?re booked|is booked|have booked|booked you|confirmed|is scheduled|scheduled you"
@@ -174,6 +184,9 @@ def check_draft(
             problems.append(f"mentions a date ({m.group(0)}) that is not one of the offered slots")
     for m in DATE_ES_RE.finditer(body):
         if (MONTHS[m.group(2).lower()], int(m.group(1))) not in dates:
+            problems.append(f"mentions a date ({m.group(0)}) that is not one of the offered slots")
+    for m in DATE_ES_SHORT_RE.finditer(body):
+        if (ES_MONTH_SHORT[m.group(2).lower()], int(m.group(1))) not in dates:
             problems.append(f"mentions a date ({m.group(0)}) that is not one of the offered slots")
     if not appointment and BOOKED_CLAIM_RE.search(body):
         problems.append("says the visit is booked or confirmed, but nothing was booked")

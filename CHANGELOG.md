@@ -6,6 +6,33 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 5 step 2: conversation evals (`make eval-conversations`, `llm=1`, `seeds=n`). Every persona runs a
+  whole conversation over 8 simulated days with nurses working the queue, 20 conversations per seed. Scored on
+  the persona's goal (booked, afternoon for busy, ride or video for no ride, nurse for questions and symptoms, 3
+  attempts for silent, opted out, AI stops after abuse) and on rules for every conversation (privacy, Spanish for
+  Jose, quiet hours, nothing after STOP). Metrics: AI messages, messages before booking, hours to booking, nurse
+  tasks. Report to data/reports and MLflow (experiment `conversation-evals`)
+- First conversation eval run: rule-based 16/20, LLM 2/20. Fixes:
+  - scripted patients answered only "?", "reply" or "responda"; LLM messages say "let us know which works", so
+    every patient looked silent. They now answer numbered options and other ways of asking
+  - failure report shows nurse task reasons (counted) and the last messages; `only=<persona>` filter
+  - quiet hours rule allows the STOP confirmation at any hour (it must go out right away)
+  - writer v10: a rebooking message doesn't repeat the missed visit's time; says plainly when a picked time is gone
+  - reviewer v4: fails only for something wrong or unsupported, not for an omitted detail; rebooking after a
+    missed visit and services from the talking points are expected
+- Circuit breaker: from the third review task on a case, the task tells the nurse to handle it directly, and the
+  simulated nurses take it over instead of handing it back
+- Second conversation eval run: rule-based 18/20, LLM 8/20. Fixes (ADR 0009):
+  - offers are stored when sent (outreach.offers; scheduling tools `record_offers`, `get_offered_slots`), and a
+    reply picking a numbered option books exactly that slot. If it's gone, the patient is told and offered new
+    times: never a different time booked for them
+  - the reviewer's safety checks always block; polish-only reasons after one rewrite are sent as advisory, so a
+    nitpick ("option 3 doesn't name the doctor") no longer stops outreach
+- Third conversation eval run: LLM 15/20 (from 8), turn evals 41/41. Fixes:
+  - offered times start 18 hours out (booking still allows 2): a same-day time was often gone by the time the
+    patient replied, hours later
+  - scripted patients recognize offers written as "1:", "1 -" or a single time with a question
+  - writer v10: Spanish always uses the formal "usted"
 - Milestone 5 step 1: per-turn evals (`make eval-turns`, `llm=1` for the LLM agents). 40 cases in
   evals/turns.jsonl across booking, scheduling, questions, clinical questions, symptoms, emergencies, barriers,
   opt-out, privacy, abuse, prompt injection, identity, handoff, memory and reminders. Checks intent, route,
@@ -25,6 +52,9 @@ each minor version is a finished milestone.
     rejected English dates in a Spanish message while the writer was told to copy them exactly)
 
 ### Fixed
+- Spanish messages offering a Tuesday slot never sent: "mar 15 sep" (martes) was read as March 15, failed the
+  date check twice and went to a nurse, every hour. Spanish short dates are now checked properly (they weren't
+  checked at all). Postmortem: docs/postmortems/2026-10-19-tuesday-is-march.md
 - The one-message-a-day rule (0.4.0) also counted bounced messages, so after a bounce no other channel was tried
   until the next day and a patient with no working channel waited a day for a nurse. Bounces no longer count
 

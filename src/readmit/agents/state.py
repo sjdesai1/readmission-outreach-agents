@@ -1,6 +1,7 @@
 """What one turn knows. Every node reads the state and returns only the keys it changes."""
 
 import operator
+import re
 from datetime import datetime
 from typing import Annotated, Literal, TypedDict
 
@@ -89,3 +90,25 @@ def reply_channel(state: TurnState) -> str | None:
     if (state.get("cadence") or {}).get("channel"):
         return state["cadence"]["channel"]
     return (state.get("plan") or {}).get("channel")
+
+
+ORDINALS = [  # first match wins; number words ("two", "dos") are left out: "at two", "a las dos" are times
+    (1, r"\b(first|1st|primer[oa]?)\b"),
+    (2, r"\b(second|2nd|segund[oa])\b"),
+    (3, r"\b(third|3rd|tercer[oa]?)\b"),
+    (-1, r"\b(last|[uú]ltim[oa])\b"),
+]
+
+
+def picked_option(text: str | None) -> int | None:
+    """Which numbered option a reply picks: 1, 2, 3, -1 for "the last one", or None. A bare "2", "option 2" or
+    "#2" counts; a 2 inside a time or a year ("2 PM", "1968") doesn't."""
+    t = (text or "").lower()
+    for n, pattern in ORDINALS:
+        if re.search(pattern, t):
+            return n
+    if m := re.fullmatch(r"\s*(?:option|opci[oó]n|n[uú]mero|#)?\s*([1-3])[\s.!]*", t) or re.search(
+        r"(?:option|opci[oó]n|n[uú]mero|#)\s*([1-3])\b", t
+    ):
+        return int(m.group(1))
+    return None

@@ -69,13 +69,25 @@ class Reply:
 
 
 def is_offer(body: str) -> bool:
-    """The message lists numbered options."""
-    return bool(re.search(r"(\b1\)|\b1\.\s|option 1|opción 1)", body.lower()))
+    """The message offers a time: numbered options in any common format ("1)", "1.", "1:", "1 -", "option 1"), or
+    a single time with a question ("would Thu Sep 17, 2:00 PM work?")."""
+    b = body.lower()
+    numbered = re.search(r"(\b1\s*[).:]\s|\b1\s+[-–]\s|option 1|opción 1|#1\b)", b)
+    one_time = re.search(r"\b\d{1,2}:\d{2}\s*(am|pm)\b", b) and "?" in b
+    return bool(numbered or one_time)
+
+
+ASKS = (
+    "reply", "respond", "let us know", "let me know", "choose", "pick", "which", "works for you",
+    "responda", "díganos", "avísenos", "elija", "cuál", "le funcione",
+)  # fmt: skip
 
 
 def wants_answer(body: str) -> bool:
+    """The message asks for an answer: a question, numbered options, or a request to reply in any wording (an LLM
+    writes "let us know which works" as often as "reply 1, 2 or 3")."""
     b = body.lower()
-    return "?" in b or "reply" in b or "responda" in b
+    return "?" in b or is_offer(body) or any(a in b for a in ASKS)
 
 
 def bad_contacts(patient_id: str, seed: int = 7) -> tuple[str, ...]:
