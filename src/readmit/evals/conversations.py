@@ -269,6 +269,11 @@ async def run_pair(c1: str, c2: str, seed: int, agents: dict | None) -> list[dic
                 "metrics": metrics(f, fixture.NOW),
                 "end_status": f["status"],
                 "why": diagnose(f),
+                "transcript": [  # for the judge (evals/judge.py)
+                    {"at": str(m["at"])[:16], "author": m["author"], "channel": m["channel"], "body": m["body"]}
+                    for m in f["messages"]
+                    if m["status"] != "failed"
+                ],
             }
         )
     return results

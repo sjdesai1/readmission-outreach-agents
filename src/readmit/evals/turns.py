@@ -122,6 +122,13 @@ async def _setup(gw, case: dict) -> None:
 def _facts(case_id: str, state: dict, sent_before: set, tasks_before: set) -> dict:
     thread = store.get_thread(case_id, limit=50)
     sent = [m["body"] for m in thread if m["direction"] == "outbound" and m["message_id"] not in sent_before]
+    inbound = [m["message_id"] for m in thread if m["direction"] == "inbound"]
+    before = [  # the conversation before this turn: our earlier messages and the patient's earlier replies
+        {"from": m["author"], "channel": m["channel"], "text": m["body"]}
+        for m in thread
+        if (m["direction"] == "outbound" and m["message_id"] in sent_before)
+        or (m["direction"] == "inbound" and m["message_id"] != inbound[-1])
+    ][-4:]
     tasks = [t for t in store.list_nurse_tasks() if t["case_id"] == case_id and t["task_id"] not in tasks_before]
     with db.transaction() as c:
         booked = db.one(
@@ -140,6 +147,12 @@ def _facts(case_id: str, state: dict, sent_before: set, tasks_before: set) -> di
             )
         ]
     patient = store.patient_summary(case_id)["patient"]
+    sched = state.get("schedule") or {}
+
+    def shown(s: dict) -> dict:  # a slot as the facts the message may state (for the judge)
+        visit = "video visit" if s.get("mode") == "telehealth" else "clinic visit"
+        return {"start": str(s.get("start_at"))[:16], "visit": visit, "doctor": s.get("provider")}
+
     return {
         "intent": (state.get("intent") or {}).get("intent"),
         "language": patient["preferred_language"],
@@ -156,6 +169,11 @@ def _facts(case_id: str, state: dict, sent_before: set, tasks_before: set) -> di
         "writer_calls": (state.get("path") or []).count("message_writer"),  # 2 = the first draft was sent back
         "advisory": bool((state.get("review") or {}).get("advisory")),
         "drafted": (state.get("draft") or {}).get("body") if "message_writer" in (state.get("path") or []) else None,
+        "before": before,
+        "given": {
+            "offered": [shown(s) for s in sched.get("offered") or []],
+            "appointment": shown(sched["appointment"]) if sched.get("appointment") else None,
+        },
     }
 
 
