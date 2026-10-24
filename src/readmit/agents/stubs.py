@@ -186,6 +186,7 @@ TEXT = {  # the rule-based writer's templates; also what patients get when the L
         "after your hospital stay.",
         "options": "Open times: {options}. Reply with the number that works for you.",
         "channel_ok": "Thanks {name}, we'll use this channel from now on.",
+        "language_ok": "Thanks {name}, we'll write to you in English from now on.",
         "channel_no": "Thanks {name}. We can't switch to that channel yet; a nurse will help update your contact "
         "details.",
         "barrier": "Thanks for telling us, {name}. We can help: a video visit from home is an option, and our team "
@@ -206,6 +207,7 @@ TEXT = {  # the rule-based writer's templates; also what patients get when the L
         "tras su hospitalización.",
         "options": "Horarios: {options}. Responda con el número que le funcione.",
         "channel_ok": "Gracias {name}, usaremos este medio desde ahora.",
+        "language_ok": "Gracias {name}, desde ahora le escribiremos en español.",
         "channel_no": "Gracias {name}. Todavía no podemos usar ese medio; una enfermera le ayudará a actualizar sus "
         "datos de contacto.",
         "barrier": "Gracias por contarnos, {name}. Podemos ayudar: una visita por video desde casa es una opción, y "
@@ -238,10 +240,14 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
         options = "; ".join(f"{i}) {w} ({h})" for i, (w, h) in enumerate(map(show, sched["offered"]), 1))
         gone = "no longer open" in (sched.get("note") or "")
         opening = t["gone"] if gone else t.get((state.get("case") or {}).get("rebook_reason") or "intro") or t["intro"]
+        if intent == "language_change":  # confirm the switch, then the times again in the new language
+            opening = t["language_ok"]
         body = f"{opening.format(name=name)} {t['options'].format(options=options)}"
     elif intent == "channel_change":
         ok = (state.get("channel_change") or {}).get("ok")
         body = t["channel_ok" if ok else "channel_no"].format(name=name)
+    elif intent == "language_change":
+        body = t["language_ok"].format(name=name)
     elif intent in ("barrier", "decline", "question"):
         body = t[intent].format(name=name)
     else:

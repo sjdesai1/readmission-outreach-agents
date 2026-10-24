@@ -2,7 +2,8 @@
 
 On call any hour for emergencies and urgent symptoms; routine work on weekdays 8 AM to 5 PM, a few tasks per
 hour, in queue order (the same order the nurse screen shows). Each call is noted in the thread as a nurse
-message. Most cases are handed back to the AI; abusive messages and patients we can't message close.
+message. Most cases are handed back to the AI; abusive messages and patients we can't message close, and so do
+patients who need an interpreter: the nurse keeps them, since the AI doesn't write in their language (ADR 0010).
 """
 
 from readmit.nurse import console
@@ -35,6 +36,13 @@ def work(t) -> int:
 def handle(task: dict) -> None:
     s = store.patient_summary(task["case_id"])
     allowed = s["contact"]["allowed_channels"]
+    if task.get("interpreter"):  # called with an interpreter; the nurse keeps the case
+        console.resolve(task["task_id"], f"called with a {task['interpreter']} interpreter", hand_back=False)
+        try:
+            store.update_case(task["case_id"], "closed", f"nurse continuing with a {task['interpreter']} interpreter")
+        except store.StoreError:
+            pass
+        return
     if allowed and task["kind"] != "review":
         lang = s["patient"]["preferred_language"]
         channel = s["contact"]["preferred_channel"] if s["contact"]["preferred_channel"] in allowed else allowed[0]

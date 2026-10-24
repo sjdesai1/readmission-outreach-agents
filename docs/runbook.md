@@ -78,6 +78,18 @@ Fix
 Escalate
 - Any overdue urgent task: immediately
 
+## Interpreter tasks
+
+Queue rows marked "interpreter: <language>" (ADR 0010).
+
+What it means
+- The patient wrote in, or asked for, a language the AI doesn't write; they got an acknowledgement in the language on file
+- The AI does nothing more on the case
+
+Fix
+- Book an interpreter (phone or video) before calling; the machine translation under each message is for triage only
+- If the call shows they read English or Spanish well, hand the case back (they can reply ENGLISH or ESPAÑOL to switch); otherwise resolve without handing back
+
 ## An MCP server is down
 
 What it means

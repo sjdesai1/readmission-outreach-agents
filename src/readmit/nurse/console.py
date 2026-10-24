@@ -2,12 +2,25 @@
 
 Nurses are care team members: they see the patient's name, risk, barriers and the whole thread (patient, AI and
 nurse messages together). They reply as themselves, resolve tasks, and hand cases back to the AI.
+
+Messages not in English get a machine translation under the original, labeled as such: enough to triage, not to
+act on clinically. A task that needs an interpreter says which language.
 """
 
 import hashlib
 
+from pydantic import BaseModel
+
 from readmit import db
+from readmit.agents import language
 from readmit.outreach import store
+
+TRANSLATE_PROMPT = "v1"
+
+
+class Translation(BaseModel):
+    language: str
+    english: str
 
 
 def queue() -> list[dict]:
@@ -42,6 +55,33 @@ def case_view(case_id: str) -> dict:
         "tasks": [t for t in store.list_nurse_tasks() if t["case_id"] == case_id],
         "events": case["recent_events"],
     }
+
+
+def needs_translation(body: str | None) -> bool:
+    """Worth translating: written in a language other than English (short replies can't be told, so they're shown
+    as they are)."""
+    wrote = language.detect(body)
+    return wrote is not None and wrote != "English"
+
+
+def translate(body: str) -> dict | None:
+    """Machine translation for the nurse: {'language', 'english'}, or None when it isn't needed or the LLM is
+    unavailable (over budget, no key). Cached like every LLM call, so redrawing the screen is free."""
+    if not needs_translation(body):
+        return None
+    from readmit import llm
+
+    try:
+        t, _ = llm.complete_json(
+            task="translate",
+            prompt_version=TRANSLATE_PROMPT,
+            system=llm.load_prompt(f"translate_{TRANSLATE_PROMPT}"),
+            user=body,
+            schema=Translation,
+        )
+    except llm.LLMError:
+        return None
+    return {"language": t.language, "english": t.english}
 
 
 def reply(task_id: str, case_id: str, channel: str, body: str, urgent: bool = False) -> dict:

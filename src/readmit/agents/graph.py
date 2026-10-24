@@ -2,12 +2,15 @@
 
 load_context -> input_guard -> route
   phone reply, identity not yet confirmed -> identity_check (year of birth, checked server-side) -> continue / ask
+  asks for the other supported language   -> apply_language_change -> scheduler (times again, in the new language)
+  writes in or asks for another language  -> escalate (a nurse with an interpreter)
   outreach_due  -> care_planner -> scheduler -> message_writer
   inbound_reply -> reply_interpreter -> remember (standing preferences) -> by intent:
         wants_visit / reschedule -> scheduler -> message_writer
         question / barrier       -> care_planner -> message_writer
         decline                  -> message_writer
         channel_change           -> apply_channel_change -> message_writer (answers on the new channel)
+        language_change          -> apply_language_change (the interpreter's second net for the rule above)
         opt_out                  -> opt_out
         third_party              -> proxy_reply  (family member: privacy-safe template, no LLM)
         symptom / clinical_question / wants_human / abusive / unclear (2nd time) -> escalate
@@ -17,6 +20,9 @@ escalate = nurse handoff: a task with an honest due time (urgent within the hour
 business day with capacity), a fixed acknowledgement to the patient, and the AI pauses on the case until a
 nurse hands it back. The AI never answers clinical questions itself. While paused, a patient reply still goes
 through input_guard: STOP and emergencies are handled, anything else is flagged for the nurse (hold_for_nurse).
+
+Language (ADR 0010): code decides, never a silent switch. A reply written in the other supported language gets
+its normal answer plus one question, asked once per patient, whether to switch.
 """
 
 import hashlib
@@ -26,6 +32,7 @@ from datetime import timedelta
 from langgraph.graph import END, START, StateGraph
 
 from readmit import llm
+from readmit.agents import language
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import check_draft, screen_inbound
 from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize_summary, render
@@ -71,6 +78,12 @@ CALLBACK_ACK = {  # the time is the nurse task's real due time, never a promise 
     "If anything gets worse before then, call your doctor's office, or 911 in an emergency.",
     "Spanish": "Gracias. Una enfermera de su equipo de atención se comunicará con usted antes del {due}. "
     "Si algo empeora antes, llame al consultorio de su médico, o al 911 en una emergencia.",
+}
+INTERPRETER_ACK = {  # the patient wrote in, or asked for, a language the AI doesn't write: a person will follow up
+    "English": "Thank you. A nurse from your care team will contact you by {due}, with an interpreter. "
+    "If anything gets worse before then, call your doctor's office, or 911 in an emergency.",
+    "Spanish": "Gracias. Una enfermera de su equipo de atención se comunicará con usted antes del {due}, con un "
+    "intérprete. Si algo empeora antes, llame al consultorio de su médico, o al 911 en una emergencia.",
 }
 MEMORY_KEYS = ("part_of_day", "earliest_time", "latest_time", "mode", "preferred_days")
 OPT_OUT_MSG = {
@@ -150,7 +163,28 @@ async def input_guard(state: TurnState, gw: Gateway) -> dict:
         and not (state.get("case") or {}).get("identity_verified_at")
     ):
         g = {**g, "action": "verify_identity"}
-    out = {"guard": g}
+    out: dict = {}
+    if g["action"] == "continue" and not state.get("paused"):  # STOP, emergencies, third parties and identity first
+        patient = (state.get("summary") or {}).get("patient") or {}
+        lang = language.screen(
+            state.get("inbound"), patient.get("preferred_language") or "English", bool(patient.get("language_asked"))
+        )
+        if lang["action"] == "language_change":
+            g = {**g, "action": "language_change", "language": lang["language"]}
+            out["intent"] = {
+                "intent": "language_change",
+                "accepts": False,
+                "details": {"new_language": lang["language"]},
+            }
+        elif lang["action"] == "interpreter":
+            g = {**g, "action": "interpreter", "language": lang["language"]}
+            out |= {
+                "interpreter": lang["language"],
+                "escalate_reason": f"patient needs an interpreter: wrote in or asked for {lang['language']}",
+            }
+        elif lang.get("ask"):
+            out["ask_language"] = lang["ask"]
+    out["guard"] = g
     if g["action"] == "emergency":
         out |= {"escalate_reason": f"possible emergency in patient reply: {state.get('inbound')!r}", "urgent": True}
     return out
@@ -178,6 +212,9 @@ async def send(state: TurnState, gw: Gateway) -> dict:
         name = (await gw.call("patient_data", "get_patient_summary", case_id=cid))["patient"]["first_name"]
         body = render(draft["body"], name)
         lang = state["summary"]["patient"]["preferred_language"]
+        ask = state.get("ask_language")
+        if ask in language.QUESTION:  # they wrote in the other language: ask once whether to switch
+            body = f"{body} {language.QUESTION[ask]}"
         if (
             channel == "phone"
             and not (state.get("case") or {}).get("identity_verified_at")
@@ -193,6 +230,11 @@ async def send(state: TurnState, gw: Gateway) -> dict:
             subject=render(draft["subject"], name) if draft.get("subject") else None,
             idempotency_key=f"{state['turn_key']}:msg",
         )
+        if ask in language.QUESTION:
+            try:
+                await gw.call("patient_data", "note_language_question", case_id=cid, language=ask)
+            except ToolFailed:
+                pass  # worst case they're asked once more
         sched = state.get("schedule") or {}
         if sched.get("offered") and not sched.get("appointment"):  # remember what "the first one" means
             await gw.call(
@@ -206,7 +248,10 @@ async def send(state: TurnState, gw: Gateway) -> dict:
             await gw.call("cases", "add_case_note", case_id=cid, note=f"intent: {intent}")
         if intent == "decline":
             await gw.call("cases", "update_case_status", case_id=cid, status="closed", reason="patient declined")
-        elif not (state.get("schedule") or {}).get("appointment"):
+        elif (
+            not (state.get("schedule") or {}).get("appointment") and (state.get("case") or {}).get("status") != "booked"
+        ):
+            # a booked patient who writes (a question, a language change) stays booked: no new offers later
             nxt = (parse_dt(state["now"]) + FOLLOW_UP_AFTER).isoformat(timespec="minutes")
             await gw.call(
                 "cases",
@@ -235,6 +280,8 @@ def _handoff(state: TurnState) -> tuple[str, str, str | None]:
         return "emergency", "urgent", None  # the 911 message is sent separately, first
     intent = (state.get("intent") or {}).get("intent")
     replied = state.get("trigger") == "inbound_reply" and bool(state.get("inbound_channel"))
+    if state.get("interpreter"):
+        return "callback", "routine", "interpreter" if replied else None
     if intent == "symptom":
         return "symptom", "urgent", "symptom" if replied else None
     if intent == "clinical_question":
@@ -278,6 +325,7 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
             reason=reason[:300],
             summary=(state.get("inbound") or "")[:300] or None,
             idempotency_key=f"{state['turn_key']}:nurse",
+            interpreter=state.get("interpreter"),
         )
     except ToolFailed as e:  # the queue is down: still pause the AI and leave a note a human will see
         reason = f"{reason} (nurse task failed: {e.message})"
@@ -287,7 +335,8 @@ async def escalate(state: TurnState, gw: Gateway) -> dict:
             body, prio = SYMPTOM_ACK.get(lang, SYMPTOM_ACK["English"]), "safety"
         else:
             due = (when_es if lang == "Spanish" else when)(task["due_at"])
-            body, prio = CALLBACK_ACK.get(lang, CALLBACK_ACK["English"]).format(due=due), "normal"
+            acks = INTERPRETER_ACK if ack == "interpreter" else CALLBACK_ACK
+            body, prio = acks.get(lang, acks["English"]).format(due=due), "normal"
         try:
             sent = await gw.call(
                 "messaging",
@@ -493,6 +542,35 @@ async def apply_channel_change(state: TurnState, gw: Gateway) -> dict:
     return {"channel_change": {"ok": True, "now_using": new}, "reply_on": new, "summary": summary}
 
 
+async def apply_language_change(state: TurnState, gw: Gateway) -> dict:
+    """The patient asked for another language. Supported: store it (audited), answer in it. Not supported: a nurse
+    with an interpreter. The language comes from the rule guard, or from the interpreter as a second net."""
+    asked = (state.get("guard") or {}).get("language") or (
+        ((state.get("intent") or {}).get("details") or {}).get("new_language")
+    )
+    want = language.NAMES.get(language.fold(asked).strip(), (asked or "").strip().title()) if asked else None
+    if not want:
+        return {"escalate_reason": "patient asked for another language but didn't say which"}
+    if want not in language.SUPPORTED:
+        return {"interpreter": want, "escalate_reason": f"patient needs an interpreter: asked for {want}"}
+    try:
+        r = await gw.call(
+            "patient_data",
+            "set_language",
+            case_id=state["case_id"],
+            language=want,
+            source=(state.get("inbound") or "")[:200],
+        )
+    except ToolFailed as e:
+        return {"escalate_reason": f"language change to {want} failed: {e.message}"}
+    patient = {**state["summary"]["patient"], "preferred_language": want, "language_source": "patient"}
+    return {
+        "language_change": {"ok": True, "now_using": want, "previous": r.get("previous")},
+        "summary": {**state["summary"], "patient": patient},
+        "ask_language": None,
+    }
+
+
 async def proxy_reply(state: TurnState, gw: Gateway) -> dict:
     """Someone other than the patient replied. Fixed template: no name, no health details, no booking."""
     cid = state["case_id"]
@@ -557,6 +635,8 @@ def after_guard(state: TurnState) -> str:
         "emergency": "escalate",
         "third_party": "proxy_reply",
         "verify_identity": "identity_check",
+        "language_change": "apply_language_change",
+        "interpreter": "escalate",
     }.get(state["guard"]["action"], "reply_interpreter")
 
 
@@ -582,6 +662,8 @@ def after_interpreter(state: TurnState) -> str:
         return "care_planner"
     if intent == "channel_change":
         return "apply_channel_change"
+    if intent == "language_change":
+        return "apply_language_change"
     if intent == "opt_out":
         return "opt_out"
     if intent == "third_party":
@@ -591,6 +673,13 @@ def after_interpreter(state: TurnState) -> str:
     if intent == "unclear" and state.get("unclear_streak", 0) >= 1:
         return "escalate"
     return "message_writer"
+
+
+def after_language_change(state: TurnState) -> str:
+    if state.get("escalate_reason"):
+        return "escalate"
+    # offer times again in the new language, unless a visit is already booked (then just confirm)
+    return "message_writer" if (state.get("case") or {}).get("status") == "booked" else "scheduler"
 
 
 def after_planner(state: TurnState) -> str:
@@ -642,6 +731,7 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
         "opt_out": opt_out,
         "proxy_reply": proxy_reply,
         "apply_channel_change": apply_channel_change,
+        "apply_language_change": apply_language_change,
         "identity_check": identity_check,
         "remember": remember,
         "hold_for_nurse": hold_for_nurse,
@@ -670,7 +760,15 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     g.add_conditional_edges(
         "input_guard",
         after_guard,
-        ["opt_out", "escalate", "proxy_reply", "identity_check", "reply_interpreter", "hold_for_nurse"],
+        [
+            "opt_out",
+            "escalate",
+            "proxy_reply",
+            "identity_check",
+            "reply_interpreter",
+            "hold_for_nurse",
+            "apply_language_change",
+        ],
     )
     g.add_edge("hold_for_nurse", END)
     g.add_conditional_edges("identity_check", after_identity, ["reply_interpreter", "escalate", END])
@@ -678,9 +776,19 @@ def build_graph(gateway: Gateway, agents: dict | None = None):
     g.add_conditional_edges(
         "remember",
         after_interpreter,
-        ["scheduler", "care_planner", "opt_out", "proxy_reply", "apply_channel_change", "escalate", "message_writer"],
+        [
+            "scheduler",
+            "care_planner",
+            "opt_out",
+            "proxy_reply",
+            "apply_channel_change",
+            "apply_language_change",
+            "escalate",
+            "message_writer",
+        ],
     )
     g.add_edge("apply_channel_change", "message_writer")
+    g.add_conditional_edges("apply_language_change", after_language_change, ["scheduler", "message_writer", "escalate"])
     g.add_conditional_edges("care_planner", after_planner, ["scheduler", "message_writer", "escalate"])
     g.add_conditional_edges("scheduler", after_scheduler, ["message_writer", "escalate"])
     g.add_edge("message_writer", "output_checks")

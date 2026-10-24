@@ -67,4 +67,4 @@ Dashboard and alerts: http://localhost:3000 · runbook: [docs/runbook.md](docs/r
 - Learning sequencer: a bandit choosing channel and timing per patient
 - Cost: cheaper model routing per agent, prompt caching, batch overnight work
 - Self-hosted inference: vLLM serving an open 7-8B model; per-agent routing between it and Gemini decided by the evals; structured output, prefix caching, load tests, serving metrics on the Grafana dashboard
-- Language: patient-set language preference (asked, never switched silently), Spanish STOP words in the guard, translated view and interpreter flag on the nurse screen, more languages
+- Languages beyond English and Spanish: templates, date checks and evals per language (the preference, Spanish STOP words, interpreter handoff and translated nurse view are done: [ADR 0010](docs/decisions/0010-language-is-a-stored-fact.md))

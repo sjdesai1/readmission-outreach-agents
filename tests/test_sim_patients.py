@@ -40,3 +40,9 @@ def test_attendance_is_seeded_per_visit():
 
     assert attends("busy", "C1|2026-09-10 09:00") == attends("busy", "C1|2026-09-10 09:00")
     assert sum(attends("no_ride", f"a{i}") for i in range(200)) < sum(attends("engaged", f"a{i}") for i in range(200))
+
+
+def test_the_language_question_alone_gets_no_reply():
+    p = Patient("C2", "med_question", 1968, replies_sent=1)  # script done; only new offers get an answer
+    booked = "Hola Jose, su visita está reservada para el vie 11 sep, 9:30 AM. Would you prefer our messages in English? Reply ENGLISH."
+    assert respond(p, {"channel": "sms", "body": booked}, T) is None and p.rebook_replies == 0

@@ -12,6 +12,8 @@ Rules enforced here, not in prompts (an agent can't talk its way around them):
   * identity: checked against the record server-side (the caller never sees the true value); locks after 3 misses
   * nurse handoff: every task gets an honest due time from nurse capacity; the case pauses until a nurse hands back
   * memory: only standing preferences, from a fixed list of keys
+  * language: a patient's stated language overrides the record, only for languages the outreach supports; anything
+    else goes to a nurse with an interpreter (ADR 0010)
   * idempotency: retrying a booking, message or referral with the same key returns the original
   * audit: every action writes an event on the case
 """
@@ -57,6 +59,8 @@ REVIEW_REPEAT_LIMIT = 2  # after this many review tasks on one case, the next on
 NURSE_DAILY_CAPACITY = 20  # routine callbacks per business day (2 nurses x ~10)
 URGENT_WITHIN = timedelta(hours=1)
 MEMORY_KEYS = ("part_of_day", "earliest_time", "latest_time", "mode", "preferred_days")
+LANGUAGES = ("English", "Spanish")  # what the AI writes in (evaluated); same list as agents/language.SUPPORTED
+LANGUAGE_KEYS = ("language", "language_asked")  # kept in patient_memory, shown as the language, not as preferences
 CONSENT_SQL = {
     ch: f"update sim.patients set {ch}_opt_in = true, preferred_channel = :ch where patient_id = :p" for ch in CHANNELS
 }  # fixed statements, one per known channel: no user text ever reaches the SQL
@@ -146,6 +150,8 @@ def patient_summary(case_id: str) -> dict:
         memory = db.rows(c, "select key, value from outreach.patient_memory where patient_id = :p", p=p["patient_id"])
         bad = _bad_channels(c, p["patient_id"])
         told = db.rows(c, "select barrier from outreach.case_barriers where case_id = :id order by at", id=case_id)
+    remembered = {m["key"]: json.loads(m["value"]) for m in memory}
+    stated = {k: remembered.get(k) for k in LANGUAGE_KEYS}
     channels = {
         "portal": bool(p["has_portal_account"] and p["portal_opt_in"]),
         "sms": bool(p["sms_opt_in"] and p["mobile_phone"]),
@@ -158,7 +164,9 @@ def patient_summary(case_id: str) -> dict:
         "patient": {
             "first_name": p["first_name"],
             "age": stay["age"] if stay else None,
-            "preferred_language": p["preferred_language"],
+            "preferred_language": stated.get("language") or p["preferred_language"],
+            "language_source": "patient" if stated.get("language") else "record",
+            "language_asked": bool(stated.get("language_asked")),
         },
         "contact": {
             "allowed_channels": [ch for ch, ok in channels.items() if ok and ch not in bad],
@@ -175,7 +183,7 @@ def patient_summary(case_id: str) -> dict:
             "disposition": stay["discharge_disposition"],
             "followup_already_booked": bool(stay["followup_scheduled_7d"]),
         },
-        "memory": {m["key"]: json.loads(m["value"]) for m in memory},
+        "memory": {k: v for k, v in remembered.items() if k not in LANGUAGE_KEYS},
         "care_team": {
             "own_doctor": pcp["name"] if pcp else None,
             "follow_up_by": str(case["follow_up_by"])[:10] if case.get("follow_up_by") else None,
@@ -211,8 +219,11 @@ def find_slots(
         summary_ok = db.one(
             c,
             """select p.telehealth_opt_in and p.telehealth_capable as tele_ok,
-                                         p.preferred_language as lang, k.pcp_provider_id, k.follow_up_by
+                                         coalesce(m.value::json #>> '{}', p.preferred_language) as lang,
+                                         k.pcp_provider_id, k.follow_up_by
                                   from outreach.cases k join sim.patients p using (patient_id)
+                                  left join outreach.patient_memory m
+                                    on m.patient_id = k.patient_id and m.key = 'language'
                                   where k.case_id = :id""",
             id=case_id,
         )
@@ -1091,10 +1102,17 @@ def _next_business_day(d):
 
 
 def create_nurse_task(
-    case_id: str, kind: str, priority: str, reason: str, idempotency_key: str, summary: str | None = None
+    case_id: str,
+    kind: str,
+    priority: str,
+    reason: str,
+    idempotency_key: str,
+    summary: str | None = None,
+    interpreter: str | None = None,
 ) -> dict:
     """Hand a case to a nurse. The due time is honest: urgent within the hour; routine by 5 PM on the first
-    business day with capacity left. The case is paused (escalated) until a nurse hands it back."""
+    business day with capacity left. The case is paused (escalated) until a nurse hands it back.
+    interpreter: the language the nurse needs an interpreter for (the patient wrote in or asked for it)."""
     if kind not in NURSE_KINDS:
         raise StoreError(f"kind must be one of {NURSE_KINDS}")
     if priority not in ("urgent", "routine"):
@@ -1131,8 +1149,8 @@ def create_nurse_task(
         task = db.one(
             c,
             """insert into outreach.nurse_tasks (task_id, idempotency_key, case_id, patient_id, kind, priority,
-                   reason, summary, due_at, created_at)
-               values (:id, :k, :case_id, :p, :kind, :prio, :reason, :summary, :due, :t) returning *""",
+                   reason, summary, due_at, created_at, interpreter)
+               values (:id, :k, :case_id, :p, :kind, :prio, :reason, :summary, :due, :t, :interp) returning *""",
             id=_id("task"),
             k=idempotency_key,
             case_id=case_id,
@@ -1143,6 +1161,7 @@ def create_nurse_task(
             summary=summary,
             due=due,
             t=t,
+            interp=interpreter,
         )
         if case["status"] not in (*CLOSED_STATUSES, "escalated"):
             db.rows(
@@ -1153,7 +1172,12 @@ def create_nurse_task(
                 id=case_id,
             )
             log_event(c, case_id, "status_changed", {"from": case["status"], "to": "escalated", "reason": reason})
-        log_event(c, case_id, "nurse_task_created", {"task_id": task["task_id"], "kind": kind, "priority": priority})
+        log_event(
+            c,
+            case_id,
+            "nurse_task_created",
+            {"task_id": task["task_id"], "kind": kind, "priority": priority, "interpreter": interpreter},
+        )
     return _task_view(task)
 
 
@@ -1166,6 +1190,7 @@ def _task_view(t: dict) -> dict:
         "reason": t["reason"],
         "status": t["status"],
         "due_at": str(t["due_at"]),
+        "interpreter": t.get("interpreter"),
     }
 
 
@@ -1229,20 +1254,56 @@ def remember_preference(case_id: str, key: str, value, source: str) -> dict:
         raise StoreError(f"key must be one of {MEMORY_KEYS}")
     with db.transaction() as c:
         case = _case(c, case_id, acting=True)
-        db.rows(
-            c,
-            """insert into outreach.patient_memory (patient_id, key, value, source, updated_at)
-               values (:p, :k, :v, :s, :t)
-               on conflict (patient_id, key) do update set value = excluded.value, source = excluded.source,
-                                                         updated_at = excluded.updated_at""",
-            p=case["patient_id"],
-            k=key,
-            v=json.dumps(value),
-            s=source[:200],
-            t=now(c),
-        )
+        _save_memory(c, case["patient_id"], key, value, source)
         log_event(c, case_id, "memory_saved", {"key": key, "value": value})
     return {"saved": key}
+
+
+def _save_memory(c, patient_id: str, key: str, value, source: str) -> None:
+    db.rows(
+        c,
+        """insert into outreach.patient_memory (patient_id, key, value, source, updated_at)
+           values (:p, :k, :v, :s, :t)
+           on conflict (patient_id, key) do update set value = excluded.value, source = excluded.source,
+                                                     updated_at = excluded.updated_at""",
+        p=patient_id,
+        k=key,
+        v=json.dumps(value),
+        s=source[:200],
+        t=now(c),
+    )
+
+
+def set_language(case_id: str, language: str, source: str) -> dict:
+    """The patient asked for another language. Only languages the outreach is evaluated in; anything else needs a
+    nurse with an interpreter. Patient-level, so it carries over to later stays; audited on the case."""
+    if language not in LANGUAGES:
+        raise StoreError(
+            f"the outreach can't write in {language}; supported: {', '.join(LANGUAGES)}. "
+            "Hand the case to a nurse with an interpreter."
+        )
+    with db.transaction() as c:
+        case = _case(c, case_id, acting=True)
+        before = db.one(
+            c,
+            "select value from outreach.patient_memory where patient_id = :p and key = 'language'",
+            p=case["patient_id"],
+        )
+        previous = json.loads(before["value"]) if before else _patient(c, case["patient_id"])["preferred_language"]
+        _save_memory(c, case["patient_id"], "language", language, source)
+        log_event(
+            c, case_id, "language_changed", {"language": language, "previous": previous, "source": "patient message"}
+        )
+    return {"language": language, "previous": previous}
+
+
+def note_language_question(case_id: str, language: str) -> dict:
+    """We asked the patient whether to switch to `language`. Asked once per patient, never again."""
+    with db.transaction() as c:
+        case = _case(c, case_id)
+        _save_memory(c, case["patient_id"], "language_asked", language, "asked after a reply in that language")
+        log_event(c, case_id, "language_asked", {"language": language})
+    return {"asked": language}
 
 
 def add_note(case_id: str, note: str) -> dict:

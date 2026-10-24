@@ -42,6 +42,9 @@ class TurnState(TypedDict, total=False):
     identity: dict  # phone identity check: asked / verified
     reply_on: str | None  # channel the patient just switched to (overrides the inbound channel)
     channel_change: dict  # result of a requested channel change
+    language_change: dict  # result of a requested language change (ok, now_using, previous)
+    interpreter: str | None  # the patient needs a nurse with an interpreter for this language
+    ask_language: str | None  # they wrote in the other supported language: ask once whether to switch
     remembered: list[str]  # standing preferences saved this turn ("I work mornings")
     escalate_reason: str | None
     urgent: bool

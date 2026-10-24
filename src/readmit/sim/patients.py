@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from readmit.agents.language import QUESTION
+
 # persona -> (reply delay range in hours, replies in order; None = stops replying)
 SCRIPTS: dict[str, tuple[tuple[float, float], list[str]]] = {
     "engaged": ((1, 6), ["The first one works for me."]),
@@ -29,6 +31,8 @@ SCRIPTS: dict[str, tuple[tuple[float, float], list[str]]] = {
     ),
     "abusive": ((1, 6), ["Stop bothering me, you people are useless."]),
     "spanish_speaker": ((2, 10), ["Sí, la primera opción está bien."]),
+    "switches_language": ((2, 10), ["¿Me puede escribir en español, por favor?", "Sí, la primera."]),
+    "needs_interpreter": ((2, 10), ["Tôi không hiểu tin nhắn này. Tôi chỉ nói tiếng Việt."]),
 }
 ID_ASKS = ("year of birth", "año de nacimiento")
 
@@ -36,7 +40,14 @@ ID_ASKS = ("year of birth", "año de nacimiento")
 BAD_EMAIL, BAD_NUMBER = 0.06, 0.04
 
 # chance of missing a booked visit, by persona (no ride and busy schedules miss more)
-NO_SHOW = {"busy": 0.30, "no_ride": 0.35, "spanish_speaker": 0.15, "injection_attempt": 0.10, "engaged": 0.08}
+NO_SHOW = {
+    "busy": 0.30,
+    "no_ride": 0.35,
+    "spanish_speaker": 0.15,
+    "switches_language": 0.15,
+    "injection_attempt": 0.10,
+    "engaged": 0.08,
+}
 # what a patient who already finished their script says when offered new times (after a no-show or cancellation)
 REBOOK_LINE = {
     "engaged": "The first one works.",
@@ -44,6 +55,7 @@ REBOOK_LINE = {
     "no_ride": "The first one is fine.",
     "injection_attempt": "Ok, the first one.",
     "spanish_speaker": "Sí, la primera.",
+    "switches_language": "Sí, la primera.",
     "med_question": "Thanks. The first one works.",  # after the nurse answered their question
     "symptomatic": "I'm feeling better. The first one works.",  # after the nurse checked on them
 }
@@ -112,7 +124,12 @@ def seeded(seed: int, *parts) -> random.Random:
 
 
 def respond(patient: Patient, message: dict, sent_at, seed: int = 7) -> Reply | None:
-    """The patient's answer to one outbound message, or None (no answer)."""
+    """The patient's answer to one outbound message, or None (no answer). The once-only language question is
+    ignored: scripted patients keep their language, and a "?" added to a booking confirmation isn't an offer."""
+    body = message["body"]
+    for q in QUESTION.values():
+        body = body.replace(q, "")
+    message = {**message, "body": body}
     if not wants_answer(message["body"]):
         return None
     (lo, hi), lines = SCRIPTS.get(patient.persona, SCRIPTS["engaged"])

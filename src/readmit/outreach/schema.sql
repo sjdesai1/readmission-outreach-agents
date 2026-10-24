@@ -121,8 +121,11 @@ create table if not exists outreach.nurse_tasks (
     resolution      text
 );
 create index if not exists nurse_tasks_open_idx on outreach.nurse_tasks (status, priority, due_at);
+-- Language PR: the language a nurse needs an interpreter for (null: the patient's own language is supported)
+alter table outreach.nurse_tasks add column if not exists interpreter text;
 
 -- Standing preferences a patient stated ("I work mornings"); patient-level, so they carry over to later stays.
+-- Also the language they asked for (key 'language') and whether we asked about switching ('language_asked').
 create table if not exists outreach.patient_memory (
     patient_id text not null,
     key        text not null,

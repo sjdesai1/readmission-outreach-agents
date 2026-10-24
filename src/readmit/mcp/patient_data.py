@@ -15,7 +15,8 @@ from readmit.outreach import store
 mcp = FastMCP(
     name="patient_data",
     instructions="Patient context for outreach, minimum necessary: first name, language, allowed channels, the "
-    "recent stay, risk drivers, barriers and standing preferences. Contact details (phone, email) are never returned; the "
+    "recent stay, risk drivers, barriers and standing preferences. The language shown is the one the patient asked for, "
+    "else the registration record. Contact details (phone, email) are never returned; the "
     "messaging server handles delivery. verify_identity checks a year of birth without revealing it.",
 )
 
@@ -52,6 +53,26 @@ def remember_preference(
 ) -> dict:
     """Save a standing preference the patient stated ("I work mornings"), reused in later turns and stays."""
     return call(store.remember_preference, case_id, key, value, source)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+def set_language(
+    case_id: CaseId,
+    language: Annotated[Literal["English", "Spanish"], Field(description="The language the patient asked for")],
+    source: Annotated[str, Field(description="What the patient said, briefly")],
+) -> dict:
+    """Record the language the patient asked to be contacted in. It overrides the registration record for every
+    later message and stay. Other languages can't be set: a nurse with an interpreter takes those patients."""
+    return call(store.set_language, case_id, language, source)
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+def note_language_question(
+    case_id: CaseId,
+    language: Annotated[Literal["English", "Spanish"], Field(description="The language we asked about")],
+) -> dict:
+    """Record that the patient was asked whether to switch to this language, so they are asked only once."""
+    return call(store.note_language_question, case_id, language)
 
 
 @mcp.resource("patient://{case_id}/summary", mime_type="application/json")
