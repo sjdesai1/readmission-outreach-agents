@@ -6,6 +6,22 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 6 step 1: LLM judge (`make eval-judge`, `agents=rule-based`, `limit=n`). A second model
+  (LLM_JUDGE_MODEL, not the writer's) grades every message patients got in the last turn, red-team and
+  conversation eval runs on seven yes / no / n/a criteria, each with a reason written first: answers the patient,
+  clear next step, warm and respectful tone, plain language, no medical advice, language quality (Spanish:
+  natural, "usted"), consistent with the facts. Identical messages in the same context are graded once. Reports
+  pass rate per criterion, messages passing all, by source, the failures with reasons, and the length of passing
+  vs failing messages (a check for verbosity bias). Saved to data/reports/judge_<agents>.json, logged to MLflow.
+  Turn eval facts now include the times offered, the visit booked and the messages before the turn;
+  conversation reports include transcripts
+- First run: LLM agents 86/96 messages pass every criterion, rule-based templates 69/96; the difference is almost
+  all "answers the patient" (89% vs 67%). Passing and failing messages are about the same length (43 vs 40 words)
+- Judge rubric v2 after reading the judge's own failures: it now sees the messages before a turn ("the second
+  one" refers to an offer it couldn't see), declining what the system must never do (a diagnosis by text, its
+  instructions) counts as responding, and code, not the judge, marks "consistent with the facts" n/a when no
+  facts are given and "answers the patient" n/a when the patient hasn't written since our last message
+- LLM_JUDGE_MODEL defaults to gemini-3.1-flash-lite: gemini-3.5-flash ran out of free daily quota after 17 calls
 - Conversation evals: failures list what the agents decided (intents, preferences saved, barriers, bookings)
 - Language preference (ADR 0010). An explicit request ("text me in Spanish", "ESPAÑOL", "en inglés por favor")
   is caught by the input guard and stored in patient memory through a new `set_language` tool (audited,
