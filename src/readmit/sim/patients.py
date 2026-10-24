@@ -59,7 +59,7 @@ REBOOK_LINE = {
     "med_question": "Thanks. The first one works.",  # after the nurse answered their question
     "symptomatic": "I'm feeling better. The first one works.",  # after the nurse checked on them
 }
-MAX_REBOOK_REPLIES = 2
+MAX_REBOOK_REPLIES = 3  # e.g. after a nurse call, after "that time is gone", after a no-show
 
 
 @dataclass

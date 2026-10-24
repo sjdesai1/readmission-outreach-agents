@@ -36,7 +36,7 @@ from readmit.agents import language
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import check_draft, screen_inbound
 from readmit.agents.privacy import configure_tracing, pseudonymize, pseudonymize_summary, render
-from readmit.agents.state import MAX_REVISIONS, TurnState, parse_dt, reply_channel, when, when_es
+from readmit.agents.state import MAX_REVISIONS, TurnState, on_file, parse_dt, reply_channel, when, when_es
 from readmit.agents.stubs import STUBS
 from readmit.config import settings
 from readmit.outreach import cadence
@@ -166,8 +166,13 @@ async def input_guard(state: TurnState, gw: Gateway) -> dict:
     out: dict = {}
     if g["action"] == "continue" and not state.get("paused"):  # STOP, emergencies, third parties and identity first
         patient = (state.get("summary") or {}).get("patient") or {}
+        thread = state.get("thread") or []
         lang = language.screen(
-            state.get("inbound"), patient.get("preferred_language") or "English", bool(patient.get("language_asked"))
+            state.get("inbound"),
+            patient.get("preferred_language") or "English",
+            bool(patient.get("language_asked")),
+            last_outbound=next((m["body"] for m in reversed(thread) if m["direction"] == "outbound"), None),
+            recent_inbound=[m["body"] for m in thread if m["direction"] == "inbound"],
         )
         if lang["action"] == "language_change":
             g = {**g, "action": "language_change", "language": lang["language"]}
@@ -180,8 +185,12 @@ async def input_guard(state: TurnState, gw: Gateway) -> dict:
             g = {**g, "action": "interpreter", "language": lang["language"]}
             out |= {
                 "interpreter": lang["language"],
+                # we can't read what they wrote: it could be a symptom, so a nurse sees it within the hour
+                "interpreter_urgent": bool(lang.get("unread")),
                 "escalate_reason": f"patient needs an interpreter: wrote in or asked for {lang['language']}",
             }
+        elif lang.get("switch"):
+            out["auto_language"] = lang["switch"]  # applied in remember; the rest of the turn runs as usual
         elif lang.get("ask"):
             out["ask_language"] = lang["ask"]
     out["guard"] = g
@@ -196,8 +205,16 @@ async def output_checks(state: TurnState, gw: Gateway) -> dict:
     channel = reply_channel(state)
     # the portal is logged in (identity verified), so clinical details may appear there; nowhere else
     private = [] if channel == "portal" else [stay.get("diagnosis_group")]
+    summary = state.get("summary") or {}
     problems = check_draft(
-        state["draft"]["body"], channel, sched.get("offered") or [], sched.get("appointment"), private_terms=private
+        state["draft"]["body"],
+        channel,
+        sched.get("offered") or [],
+        sched.get("appointment"),
+        private_terms=private,
+        language=(summary.get("patient") or {}).get("preferred_language"),
+        on_file=on_file(state),
+        telehealth_ok=bool((summary.get("contact") or {}).get("telehealth_ok")),
     )
     if problems:
         return {"problems": problems, "revisions": state.get("revisions", 0) + 1}
@@ -215,6 +232,10 @@ async def send(state: TurnState, gw: Gateway) -> dict:
         ask = state.get("ask_language")
         if ask in language.QUESTION:  # they wrote in the other language: ask once whether to switch
             body = f"{body} {language.QUESTION[ask]}"
+        if (state.get("language_change") or {}).get(
+            "auto"
+        ):  # switched after repeated replies: say so, and the way back
+            body = f"{body} {language.SWITCHED[lang]}"
         if (
             channel == "phone"
             and not (state.get("case") or {}).get("identity_verified_at")
@@ -281,7 +302,8 @@ def _handoff(state: TurnState) -> tuple[str, str, str | None]:
     intent = (state.get("intent") or {}).get("intent")
     replied = state.get("trigger") == "inbound_reply" and bool(state.get("inbound_channel"))
     if state.get("interpreter"):
-        return "callback", "routine", "interpreter" if replied else None
+        priority = "urgent" if state.get("interpreter_urgent") else "routine"
+        return "callback", priority, "interpreter" if replied else None
     if intent == "symptom":
         return "symptom", "urgent", "symptom" if replied else None
     if intent == "clinical_question":
@@ -430,12 +452,29 @@ async def remember(state: TurnState, gw: Gateway) -> dict:
     intent = state.get("intent") or {}
     details = intent.get("details") or {}
     out: dict = {}
+    if auto := state.get("auto_language"):  # their last replies were all in this language, after we asked
+        try:
+            r = await gw.call(
+                "patient_data",
+                "set_language",
+                case_id=state["case_id"],
+                language=auto,
+                source=f"{language.SWITCH_AFTER} replies in a row in {auto}, after being asked",
+            )
+            patient = {**state["summary"]["patient"], "preferred_language": auto, "language_source": "patient"}
+            out = {
+                "summary": {**state["summary"], "patient": patient},
+                "language_change": {"ok": True, "now_using": auto, "previous": r.get("previous"), "auto": True},
+            }
+        except ToolFailed:
+            pass  # stays in the current language; the next reply tries again
     if intent.get("intent") == "barrier" and details.get("barrier"):
         try:
             b = await gw.call("cases", "record_barrier", case_id=state["case_id"], detail=details["barrier"])
-            risk = dict((state.get("summary") or {}).get("risk") or {})
+            summary = out.get("summary") or state["summary"]
+            risk = dict(summary.get("risk") or {})
             risk["barriers"] = sorted({*(risk.get("barriers") or []), b["barrier"]})
-            out = {"summary": {**state["summary"], "risk": risk}}
+            out |= {"summary": {**summary, "risk": risk}, "barrier": b["barrier"]}
         except ToolFailed:
             pass  # the planner still sees the barrier in this turn's intent
     if not intent.get("standing"):
@@ -462,7 +501,7 @@ async def remember(state: TurnState, gw: Gateway) -> dict:
     if not saved:
         return out
     summary = out.get("summary") or state["summary"]
-    return {"remembered": saved, "summary": {**summary, "memory": memory}}
+    return {**out, "remembered": saved, "summary": {**summary, "memory": memory}}
 
 
 async def opt_out(state: TurnState, gw: Gateway) -> dict:

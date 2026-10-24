@@ -204,3 +204,70 @@ def test_the_interpreter_is_the_second_net_for_language_requests():
     )
     assert "reply_interpreter" in s["path"] and "apply_language_change" in s["path"]
     assert store.patient_summary("C1")["patient"]["preferred_language"] == "Spanish"
+
+
+# ------------------------------------------------------------------ follow-ups from milestone 6
+def test_a_plain_yes_to_our_question_switches():
+    asked = "Hi Maria, your visit is booked. " + language.QUESTION["Spanish"]
+    assert language.screen("Sí", "English", True, last_outbound=asked) == {
+        "action": "language_change",
+        "language": "Spanish",
+    }
+    assert (
+        language.screen("ok", "English", True, last_outbound=asked)["action"] == "continue"
+    )  # acknowledges the booking
+    assert language.screen("Sí", "English", True, last_outbound="Hi Maria, see you then.")["action"] == "continue"
+
+
+def test_three_replies_in_spanish_after_the_question_switch():
+    es = ["¿Dónde está la clínica?", "¿Hay estacionamiento en la clínica?", "¿Cuánto dura la cita?"]
+    assert language.screen(es[-1], "English", True, recent_inbound=es) == {"action": "continue", "switch": "Spanish"}
+    mixed = [es[0], "Where is it exactly?", es[2]]  # a reply in her own language resets the count
+    assert language.screen(es[2], "English", True, recent_inbound=mixed) == {"action": "continue"}
+    assert language.screen(es[2], "English", False, recent_inbound=es)["action"] == "continue"
+    assert "ask" in language.screen(es[2], "English", False, recent_inbound=es)  # not asked yet: ask first
+
+
+def test_vietnamese_without_accents_is_still_vietnamese():
+    assert language.detect("Toi khong hieu tin nhan nay") == "Vietnamese"
+    assert language.screen("Toi khong hieu tin nhan nay", "English", False) == {
+        "action": "interpreter",
+        "language": "Vietnamese",
+        "unread": True,
+    }
+
+
+@pg
+def test_a_message_we_cannot_read_is_urgent_for_the_nurse():
+    turn("C2")
+    s = turn("C2", "Tôi bị đau ngực từ tối qua")  # "I've had chest pain since last night": the guard can't read it
+    assert s["outcome"]["nurse_task"]["priority"] == "urgent"
+    assert store.list_nurse_tasks()[0]["interpreter"] == "Vietnamese"
+
+
+@pg
+def test_asking_for_an_unsupported_language_in_english_stays_routine():
+    turn("C1")
+    s = turn("C1", "Could you write to me in Vietnamese? My English is not good.", channel="email")
+    assert s["outcome"]["nurse_task"]["priority"] == "routine"  # we read the request: nothing urgent in it
+
+
+@pg
+def test_a_yes_to_the_language_question_switches_in_the_graph():
+    turn("C1")
+    turn("C1", "Sí, la primera opción está bien.", channel="email")  # booked, and asked about Spanish
+    s = turn("C1", "Sí", channel="email")
+    assert "apply_language_change" in s["path"]
+    assert store.patient_summary("C1")["patient"]["preferred_language"] == "Spanish"
+
+
+@pg
+def test_three_spanish_replies_switch_with_a_notice_and_a_way_back():
+    turn("C1")
+    turn("C1", "¿Dónde está la clínica?", channel="email")  # asked once
+    turn("C1", "¿Hay estacionamiento en la clínica?", channel="email")
+    s = turn("C1", "¿Cuánto dura la cita?", channel="email")
+    assert s["language_change"]["auto"] and s["language_change"]["now_using"] == "Spanish"
+    last_body = [m for m in store.get_thread("C1") if m["direction"] == "outbound"][-1]["body"]
+    assert last_body.endswith(language.SWITCHED["Spanish"]) and "ENGLISH" in last_body
+    assert store.patient_summary("C1")["patient"]["preferred_language"] == "Spanish"

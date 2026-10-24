@@ -103,11 +103,14 @@ def test_clinical_question_goes_to_a_nurse_not_the_writer(fake_llm):
     assert s["path"][-1] == "escalate" and "write_message" not in [p["task"] for p in prompts]
 
 
-def test_llm_down_while_reading_a_reply_escalates(fake_llm):
+def test_llm_down_while_reading_a_reply_falls_back_to_rules(fake_llm):
+    """ADR 0013: an outage (rate limit, both models down) reads the reply with rules, like the spend cap. It used to
+    page a nurse for every reply: one quota outage made a nurse task per patient."""
     answers, _ = fake_llm
-    answers["interpret_reply"] = LLMError("both models failed")
+    answers |= {k: LLMError("rate limited") for k in ("interpret_reply", "schedule_step", "write_message")}
     s = turn("C1", "yes please")
-    assert s["outcome"]["action"] == "escalated" and "LLM unavailable" in s["outcome"]["reason"]
+    assert s["intent"]["read_by"] == "rules" and s["intent"]["intent"] == "wants_visit"
+    assert s["outcome"]["action"] == "sent" and not store.list_nurse_tasks()
 
 
 def test_llm_down_while_writing_falls_back_to_a_template(fake_llm):
@@ -183,7 +186,10 @@ def test_channel_change_without_contact_details_is_explained(fake_llm):
     answers, _ = fake_llm
     answers |= {
         "interpret_reply": {"intent": "channel_change", "new_channel": "sms", "confidence": 0.9},
-        "write_message": {"subject": "Sorry", "body": "Sorry {first_name}, a nurse will help with that."},
+        "write_message": {
+            "subject": "Sorry",
+            "body": "Sorry {first_name}, we can't text you yet. Reply NURSE and a nurse can help.",
+        },
     }
     s = turn("C1", "text me instead", channel="email")  # no mobile number on file
     assert not s["channel_change"]["ok"] and s["outcome"]["channel"] == "email"

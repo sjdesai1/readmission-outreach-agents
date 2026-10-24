@@ -45,7 +45,7 @@ ACCESS: dict[str, set[str]] = {
         "cases.update_case_status",
         "cases.add_case_note",
     },
-    "remember": {"patient_data.remember_preference", "cases.record_barrier"},
+    "remember": {"patient_data.remember_preference", "cases.record_barrier", "patient_data.set_language"},
     "hold_for_nurse": {"cases.add_case_note"},
     "close_unreachable": {"cases.add_case_note", "cases.update_case_status"},
     "remind": {"scheduling.get_appointment", "patient_data.get_patient_summary", "messaging.send_message"},

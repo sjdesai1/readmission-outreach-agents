@@ -3,7 +3,8 @@
 Input:  STOP keywords close the case, emergencies go straight to a nurse, someone other than the patient gets
         a privacy-safe reply, injection attempts are flagged.
 Output: no invented times, no contact details, no diagnosis, no booking claims without a booking, fits the channel,
-        respectful tone (no shouting, no pressure).
+        respectful tone (no shouting, no pressure), formal Spanish ("usted"), and no promise of a service that
+        isn't on file: a nurse call, a ride, an interpreter, video (ADR 0011).
 """
 
 import re
@@ -78,7 +79,7 @@ PHONE_RE = re.compile(r"\+?\d[\d\-\s().]{8,}\d")
 PLACEHOLDER_RE = re.compile(r"\[[A-Za-z _]+\]|\{[A-Za-z_]+\}")
 ALLOWED_TOKENS = {"{first_name}"}  # filled in at send time
 SHOUTING_RE = re.compile(r"\b[A-Z]{4,}\b")
-SHOUT_OK = {"STOP", "START", "HELP"}
+SHOUT_OK = {"STOP", "START", "HELP", "NURSE", "ENFERMERA", "ENGLISH", "ESPAÑOL"}  # reply keywords we ask for
 PRESSURE_RE = re.compile(
     r"\b(urgent|urgently|immediately|you must|failure to|final notice|last chance|"
     r"or else|required to respond|act now)\b",
@@ -157,8 +158,49 @@ def _allowed_times(slots: list[dict]) -> tuple[set, set]:
     return times, dates
 
 
+# Promises a message can make, and what must be on file for it to be true (ADR 0011). The writer never creates a
+# nurse task, so a drafted message can never promise a nurse will call: the patient can ask for one instead.
+PROMISES = {
+    "nurse": re.compile(
+        r"\b(a |the |our )?nurse\b[^.?!]{0,60}\b(will|'ll|is going to)\b|\bwill (have )?(a |our )?nurse\b"
+        r"|\benfermera\b[^.?!]{0,60}\b(se comunicar[aá]|le contactar[aá]|le llamar[aá]|le va a|va a)\b",
+        re.IGNORECASE,
+    ),
+    "transport": re.compile(r"\b(ride|rides|transportation|transport|traslado|transporte)\b", re.IGNORECASE),
+    "interpreter": re.compile(r"\b(interpreter|int[eé]rprete)\b", re.IGNORECASE),
+    "video": re.compile(r"\bvideo\b", re.IGNORECASE),
+}
+PROMISE_FIX = {
+    "nurse": "promises that a nurse will contact the patient, but no nurse task exists; don't promise a call "
+    "(the patient can reply NURSE to ask for one)",
+    "transport": "mentions a ride, but no transport referral is on file; don't offer one",
+    "interpreter": "mentions an interpreter, but none was requested; don't promise one",
+    "video": "mentions video, but this patient can't do video visits (no consent or device); offer clinic visits",
+}
+# Spanish messages use "usted": these words only appear when addressing someone as "tú"
+TU_RE = re.compile(r"\b(tú|tu|tus|te|ti|contigo|tienes|puedes|quieres|necesitas)\b", re.IGNORECASE)
+
+
+NEGATED = re.compile(r"n't\b|\b(not|no|aún no|todavía no)\b", re.IGNORECASE)
+
+
+def check_promises(body: str, on_file: set[str], telehealth_ok: bool) -> list[str]:
+    """Services the message offers that nothing on file backs. on_file: referral types ('transport', 'interpreter').
+    A sentence saying a service is NOT available ("video visits aren't set up for you") offers nothing."""
+    backed = set(on_file) | ({"video"} if telehealth_ok else set())
+    offers = [s for s in re.split(r"(?<=[.?!])\s+", body or "") if not NEGATED.search(s)]
+    return [PROMISE_FIX[k] for k, rx in PROMISES.items() if k not in backed and any(rx.search(s) for s in offers)]
+
+
 def check_draft(
-    body: str, channel: str | None, slots: list[dict], appointment: dict | None, private_terms: list[str] | None = None
+    body: str,
+    channel: str | None,
+    slots: list[dict],
+    appointment: dict | None,
+    private_terms: list[str] | None = None,
+    language: str | None = None,
+    on_file: set[str] | None = None,
+    telehealth_ok: bool = True,
 ) -> list[str]:
     """Problems with a draft, in words the writer can act on. Empty list = passes.
     private_terms: words that must never appear in a message (e.g. the diagnosis): messages can be read by
@@ -204,6 +246,10 @@ def check_draft(
             problems.append(f"mentions a date ({m.group(0)}) that is not one of the offered slots")
     if not appointment and BOOKED_CLAIM_RE.search(body):
         problems.append("says the visit is booked or confirmed, but nothing was booked")
+    if language == "Spanish" and (m := TU_RE.search(body)):
+        problems.append(f'uses the informal "{m.group(0)}"; address the patient as usted (su, le, puede)')
+    if on_file is not None:  # None: the caller doesn't know what's on file (unit tests of the other checks)
+        problems += check_promises(body, on_file, telehealth_ok)
     return list(dict.fromkeys(problems))  # dedupe, keep order
 
 

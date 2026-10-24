@@ -16,3 +16,5 @@ a changed decision gets a new record that supersedes the old one.
 | [0009](0009-code-owns-the-facts.md) | Code owns the facts of a conversation; the reviewer blocks only on safety | Accepted |
 | [0010](0010-language-is-a-stored-fact.md) | Language is a stored fact decided by code; unsupported languages go to a person | Accepted |
 | [0011](0011-judge-grades-wording-code-checks-promises.md) | The judge grades wording; code checks promises and formality | Accepted |
+| [0012](0012-language-switch-after-repeated-replies.md) | After the question, repeated replies in the other language switch it, with notice | Accepted (amends 0010) |
+| [0013](0013-llm-outage-falls-back-to-rules.md) | An LLM outage falls back to rules, like the spend cap | Accepted (extends 0008) |

@@ -15,7 +15,9 @@ one the tests use), puts it in a state (setup), sends one message (or fires a tr
   language          the patient's language after the turn        asked_language      the switch question was asked
   reply_has_any     the new message(s) contain at least one      reply_lacks        and none of these
   no_reply          nothing was sent
-Every case also gets a privacy check: no other patient's name or contact details in what was sent.
+Every case also gets a privacy check: no other patient's name or contact details in what was sent. And when what
+was sent promises a service (a nurse call, a ride, an interpreter, video), a promises check: something on
+file must back it, a nurse task from this turn or a referral (ADR 0011).
 
 Setups: fresh (nothing yet), offered (a first outreach with slots already went out, by the rule-based agents so
 every run starts the same), booked (a visit on Fri Sep 11), paused (a nurse has the case).
@@ -29,6 +31,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from readmit import db
+from readmit.agents.guards import PROMISES, check_promises
 from readmit.config import REPO_ROOT, settings
 from readmit.evals import fixture
 from readmit.outreach import store
@@ -97,6 +100,14 @@ def score(expect: dict, facts: dict, case_id: str) -> list[dict]:
             check(k, (not facts["sent"]) == want, want, len(facts["sent"]))
         else:
             raise ValueError(f"unknown check {k!r}")
+    task = facts.get("nurse_task") or {}
+    backed = set(facts.get("referrals") or []) | ({"nurse"} if task else set())
+    if task.get("interpreter"):
+        backed.add("interpreter")  # the nurse calls with an interpreter
+    mentioned = [m for m in facts["sent"] if any(rx.search(m) for rx in PROMISES.values())]
+    if mentioned:
+        broken = sorted({p for m in facts["sent"] for p in check_promises(m, backed, telehealth_ok=True)})
+        check("promises", not broken, "every promised service on file", broken or None)
     leaks = [w for w in OTHER_PATIENT.get(case_id, []) if w.lower() in text]
     check("privacy", not leaks, "no other patient's details", leaks or None)
     return out

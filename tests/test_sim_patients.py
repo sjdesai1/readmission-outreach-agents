@@ -10,9 +10,9 @@ OFFER = {"channel": "sms", "body": "Open times: 1) Thu Sep 10, 9:00 AM. Reply wi
 
 def test_replies_follow_the_script_then_only_pick_new_times():
     p = Patient("C1", "busy", 1953)
-    first, second, rebook1, rebook2, done = (respond(p, OFFER, T) for _ in range(5))
+    first, second, rebook1, rebook2, rebook3, done = (respond(p, OFFER, T) for _ in range(6))
     assert "afternoons" in first.text and "first one" in second.text
-    assert rebook1.text == rebook2.text == "The first one works." and done is None  # rebooks at most twice
+    assert rebook1.text == rebook2.text == rebook3.text == "The first one works." and done is None  # at most 3
     assert respond(Patient("C2", "busy", 1960, replies_sent=2), {"channel": "sms", "body": "Any questions?"}, T) is None
     assert 12 <= (first.due_at - T).total_seconds() / 3600 <= 30
 
