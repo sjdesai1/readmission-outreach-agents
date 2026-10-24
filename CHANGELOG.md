@@ -6,6 +6,12 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Milestone 6 step 2: checking the judge, on data it wasn't tuned on. `make judge-check`: planted errors, one flaw
+  per message aimed at one criterion (wrong time, medical advice, pressure, jargon, informal or broken language,
+  next step removed, a reply that ignores the patient), up to 8 per flaw, plus untouched originals for false
+  alarms. `make judge-label`: label 20 judged messages in the terminal, blind to the judge's verdict; saved with
+  their context in evals/judge_labels.jsonl. Agreement on pass/fail with Cohen's kappa, lenient and strict cases,
+  per criterion. Saved to data/reports/judge_check.json and MLflow
 - Milestone 6 step 1: LLM judge (`make eval-judge`, `agents=rule-based`, `limit=n`). A second model
   (LLM_JUDGE_MODEL, not the writer's) grades every message patients got in the last turn, red-team and
   conversation eval runs on seven yes / no / n/a criteria, each with a reason written first: answers the patient,
