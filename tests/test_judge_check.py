@@ -90,3 +90,12 @@ def test_label_sample_is_seeded_and_mixes_judge_passes_and_failures():
     s = C.label_sample(items, n=20)
     assert len(s) == 20 and s == C.label_sample(items, n=20)
     assert sum(x["id"].startswith("f") for x in s) == 8
+
+
+def test_a_single_swapped_word_is_not_a_planted_language_error():
+    one = {**ES, "message": "Hola Jose, podemos ayudar con el transporte. Su visita es el jueves."}  # only "Su"
+    assert C.plant(one, "bad_language") is None
+    formal = {**ES, "message": "Una enfermera se comunicará con usted. Si algo empeora, llame a su médico."}
+    assert (
+        C.plant(formal, "bad_language")["message"] == "Una enfermera te contactará. Si algo empeora, llama a tu médico."
+    )

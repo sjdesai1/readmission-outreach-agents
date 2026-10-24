@@ -185,6 +185,33 @@ def enforce_na(item: dict, verdicts: dict) -> dict:
     return out
 
 
+# ------------------------------------------------------------------ run log (for the dashboard)
+def record_run(kind: str, agents: str | None, messages: int, pass_rate: float | None, detail: dict) -> None:
+    """One row per judge run or judge check in ops.judge_runs (the eval database), read by Grafana."""
+    from readmit import db
+
+    db.ensure_schemas()
+    with db.transaction() as c:
+        db.rows(
+            c,
+            """create table if not exists ops.judge_runs (
+                   ts timestamptz not null default now(), kind text not null, agents text, judge_model text,
+                   prompt text, messages int, pass_rate double precision, detail jsonb)""",
+        )
+        db.rows(
+            c,
+            """insert into ops.judge_runs (kind, agents, judge_model, prompt, messages, pass_rate, detail)
+               values (:kind, :agents, :model, :prompt, :n, :rate, cast(:detail as jsonb))""",
+            kind=kind,
+            agents=agents,
+            model=settings.llm_judge_model,
+            prompt=PROMPT,
+            n=messages,
+            rate=pass_rate,
+            detail=json.dumps(detail, default=str),
+        )
+
+
 # ------------------------------------------------------------------ judging
 def judge(item: dict) -> dict:
     """Grade one item. Adds verdicts and reasons, or an error (the item is then left out of the rates)."""
@@ -284,6 +311,13 @@ def main() -> None:
     if u:
         print(f"\n  LLM: {u['calls']} calls ({u['cache_hits']} cache hits), ${u['cost_usd']:.4f}")
 
+    record_run(
+        "judge",
+        args.agents,
+        s["graded"],
+        a["rate"],
+        {c: v["rate"] for c, v in s["by_criterion"].items()} | {"by_source": s["by_source"]},
+    )
     REPORTS.mkdir(parents=True, exist_ok=True)
     out = {"agents": args.agents, "judge_model": settings.llm_judge_model, "prompt": PROMPT, "summary": s,
            "items": judged}  # fmt: skip

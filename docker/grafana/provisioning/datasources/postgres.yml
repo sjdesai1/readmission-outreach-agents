@@ -14,3 +14,16 @@ datasources:
       timescaledb: false
     secureJsonData:
       password: $POSTGRES_PASSWORD
+  # The eval database: judge runs (ops.judge_runs). Eval results, kept apart from the live program's data.
+  - name: evals
+    uid: app-eval-pg
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    user: postgres
+    jsonData:
+      database: app_eval
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: $POSTGRES_PASSWORD

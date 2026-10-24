@@ -5,7 +5,21 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+## [0.6.0] - Milestone 6
+
 ### Added
+- docs/08_m6_judge.md: results for every M6 step; ADR 0011 (the judge grades wording, code checks promises and
+  formality); interview Q&A for M6; README: milestone 6 done, commands, the labeling fixes on the roadmap
+- Final numbers: judge v2 passes 95/96 LLM messages and 88/96 template messages on every criterion. Judge check:
+  45/56 planted errors caught (wrong time, medical advice, pressure, jargon 8/8 each; broken English or tú 4/8;
+  next step removed 4/8; ignores the patient 5/8), 0/15 false alarms; agreement with 20 human labels 18/20,
+  kappa 0.80, lenient twice (unbacked "a nurse will follow up"), never stricter. A/B rerun on 87 cases: v10 and
+  v11 tie on every metric, so milestone 5's "2.9 words shorter" did not replicate; v11 stays
+- Milestone 6 step 3: judge results on the dashboard: Grafana reads the eval database (new data source "evals")
+  for a "Message quality" row: the latest LLM run's share of messages passing every criterion, and every judge
+  run and judge check (planted errors caught, false alarms, kappa). Each run writes a row to ops.judge_runs.
+  `make ab judge=1` adds "judge ok" (the judge passes the message on every criterion) as a paired secondary metric
+
 - Milestone 6 step 2: checking the judge, on data it wasn't tuned on. `make judge-check`: planted errors, one flaw
   per message aimed at one criterion (wrong time, medical advice, pressure, jargon, informal or broken language,
   next step removed, a reply that ignores the patient), up to 8 per flaw, plus untouched originals for false
@@ -45,6 +59,9 @@ each minor version is a finished milestone.
 - Schema: outreach.nurse_tasks.interpreter
 
 ### Changed
+- Planted language errors v2: an error needs at least 2 swapped words (v1 let single-word changes through, so a
+  few "errors" were barely there), and more usted -> tú forms (verbs with "le", "se comunicará con usted",
+  "llame", "tiene", "necesita")
 - Conversation evals: the abusive persona's goal accepts an opt-out as well as a nurse review ("stop bothering me,
   you people are useless" is both; the turn eval already accepted either)
 

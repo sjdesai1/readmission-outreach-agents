@@ -135,4 +135,4 @@ judge-check:    ## is the judge right? planted errors + agreement with your labe
 	LANGSMITH_TRACING=false uv run python -m readmit.evals.judge_check check
 
 ab:             ## prompt A/B on turn + red-team cases, paired (task=write_message a=v10 b=v11)
-	LANGSMITH_TRACING=false uv run python -m readmit.evals.ab --task $(or $(task),write_message) --a $(or $(a),v10) --b $(or $(b),v11)
+	LANGSMITH_TRACING=false uv run python -m readmit.evals.ab --task $(or $(task),write_message) --a $(or $(a),v10) --b $(or $(b),v11) $(if $(judge),--judge)
