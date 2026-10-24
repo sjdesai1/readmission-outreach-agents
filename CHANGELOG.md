@@ -6,6 +6,7 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Added
+- Conversation evals: failures list what the agents decided (intents, preferences saved, barriers, bookings)
 - Language preference (ADR 0010). An explicit request ("text me in Spanish", "ESPAÑOL", "en inglés por favor")
   is caught by the input guard and stored in patient memory through a new `set_language` tool (audited,
   overrides the record); the reply confirms the switch and offers the times again in the new language. A reply
@@ -26,6 +27,12 @@ each minor version is a finished milestone.
   you people are useless" is both; the turn eval already accepted either)
 
 ### Fixed
+- A patient whose picked time was gone could be offered times against their standing preference (busy Maria,
+  "I work mornings", got Mon 9:30 AM). The reply "the first one" only names that time, so its details (the gone
+  slot's day) are no longer used as a new request; and when nothing fits a request, the standing preferences are
+  tried before any open time. Regression test in test_agent_graph
+- Scripted patients answer up to 3 new offers after their script, not 2: Jose (med_question) used one after the
+  nurse call and one after his pick was taken, so he couldn't rebook after a missed visit
 - Scripted patients ignore the once-only language question (its "?" made a booking confirmation look like an offer)
 - A booked patient who replied (a question, a language change) was set back to awaiting_reply, so outreach could
   offer new times on top of the booked visit; booked cases now stay booked

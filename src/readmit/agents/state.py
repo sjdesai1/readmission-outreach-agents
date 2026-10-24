@@ -83,6 +83,11 @@ def request_details(state: TurnState) -> dict:
     return {**memory, **{k: v for k, v in details.items() if v not in (None, [], "")}}
 
 
+def standing_details(state: TurnState) -> dict:
+    """The patient's standing scheduling preferences alone ("I work mornings"), without this reply's details."""
+    return {k: v for k, v in ((state.get("summary") or {}).get("memory") or {}).items() if v not in (None, [], "")}
+
+
 def reply_channel(state: TurnState) -> str | None:
     """Answer on the channel the patient asked for, else the one they used, else the cadence's channel
     (the phone call on the last attempt), else the planner's choice."""
