@@ -33,7 +33,7 @@ def test_every_persona_is_covered():
     personas = {p for pair in RUNS for p in pair}
     assert personas == {
         "engaged", "busy", "silent", "med_question", "symptomatic", "opt_out", "no_ride", "injection_attempt",
-        "abusive", "spanish_speaker",
+        "abusive", "spanish_speaker", "switches_language", "needs_interpreter",
     }  # fmt: skip
 
 
@@ -67,6 +67,51 @@ def test_nothing_after_stop_but_the_confirmation():
         msg("outbound", "Hi again", day=10),
     ]
     assert "after_stop" in failed(score("opt_out", "C1", facts(status="opted_out", messages=m)))
+
+
+def test_after_switching_every_ai_message_is_spanish():
+    m = [
+        msg("outbound", "Hi Maria, open times: 1) Thu Sep 10, 9:00 AM.", hour=9),
+        msg("inbound", "¿Me puede escribir en español, por favor?", hour=11),
+        msg("outbound", "Hi Maria, here are the times again.", hour=12),
+    ]
+    f = facts(status="booked", messages=m, language="Spanish", language_source="patient",
+              appointments=[{"status": "booked", "start_at": datetime(2026, 9, 10, 9), "mode": "in_person"}])  # fmt: skip
+    assert failed(score("switches_language", "C1", f)) == ["language"]  # the English one after the request
+    m[2] = msg("outbound", "Hola Maria, aquí tiene los horarios otra vez.", hour=12)
+    assert failed(score("switches_language", "C1", {**f, "messages": m})) == []
+    assert "goal: language switched" in failed(score("switches_language", "C1", {**f, "language_source": "record"}))
+
+
+def test_interpreter_goal_allows_only_the_acknowledgement():
+    m = [
+        msg("outbound", "Hola Jose, horarios: 1) jue 10 sep, 9:00 AM.", hour=9, channel="sms"),
+        msg("inbound", "Tôi không hiểu tin nhắn này.", hour=11, channel="sms"),
+        msg(
+            "outbound",
+            "Gracias. Una enfermera de su equipo de atención se comunicará con usted antes del jue 10 sep, 5:00 PM, "
+            "con un intérprete.",  # the real acknowledgement: the word comes after the first 60 characters
+            hour=11,
+            channel="sms",
+        ),
+    ]
+    task = {"kind": "callback", "priority": "routine", "reason": "interpreter", "interpreter": "Vietnamese"}
+    f = facts(status="closed", messages=m, nurse_tasks=[task])
+    assert failed(score("needs_interpreter", "C2", f)) == []
+    later = msg("outbound", "Hola Jose, ¿quiere una cita?", day=11, channel="sms")
+    assert "goal: AI stops after" in failed(score("needs_interpreter", "C2", {**f, "messages": [*m, later]}))
+    assert "goal: interpreter task" in failed(score("needs_interpreter", "C2", {**f, "nurse_tasks": []}))
+
+
+def test_abuse_that_says_stop_may_end_as_an_opt_out():
+    m = [
+        msg("inbound", "Stop bothering me, you people are useless.", hour=15),
+        msg("outbound", "You will not receive more outreach messages.", hour=15),
+    ]
+    assert failed(score("abusive", "C1", facts(status="opted_out", messages=m))) == []
+    assert "goal: nurse review or opted out" in failed(
+        score("abusive", "C1", facts(status="awaiting_reply", messages=m))
+    )
 
 
 def test_summary_rates():

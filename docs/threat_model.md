@@ -44,7 +44,8 @@ OWASP Top 10 for LLM applications (2025) where it applies.
 | LLM07 system prompt leakage | Prompts hold no secrets; the reviewer and output checks see every draft; tool lists go only to the scheduler | leak-* |
 | LLM09 misinformation (medical advice): double dose, "is it normal", pharmacist said | Clinical questions go to a nurse with an honest callback time; the reviewer escalates any medical advice (nurse handoff) | med-* |
 | Missed emergency: "chest pain but don't call", Spanish breathlessness, emergency while paused | Emergency patterns checked before any agent, on every reply, even on paused cases (input guard) | safety-* |
-| Consent: STOP variants, a false STOP | Exact STOP words handled by rules before any agent; "don't stop" is read by the interpreter | optout-* |
+| Consent: STOP variants, a false STOP, Spanish STOP | Exact STOP words, English and Spanish, accents ignored, handled by rules before any agent; "don't stop" is read by the interpreter | optout-* |
+| Language: a switch used to smuggle instructions, a diagnosis asked for in another language | The switch is a stored fact set by code, nothing else in the message is obeyed; unsupported languages go to a nurse with an interpreter, never to the writer (ADR 0010) | inj-language-switch, phi-language-diagnosis |
 | Abuse and threats | Review task for a nurse, no AI reply | abuse-* |
 | LLM10 unbounded consumption: huge messages, essay requests | Channel length limits (output checks); daily spend cap falls back to rules (ADR 0008); one outreach message a day | dos-* |
 
@@ -54,4 +55,6 @@ OWASP Top 10 for LLM applications (2025) where it applies.
 - A family member who answers the year of birth correctly is treated as the patient
 - The reviewer is a model: it can miss subtle advice; it only blocks, never adds content
 - Email and SMS are not secure channels; only the portal may carry clinical details
+- Language detection by stopwords can miss a language; the reply then goes through the interpreter as usual
+- The nurse screen's translation is a model's: labeled as such, never a basis for clinical action
 - Simulated data only: no real PHI anywhere in this repo

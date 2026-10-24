@@ -74,10 +74,13 @@ def create_nurse_task(
     reason: Annotated[str, Field(min_length=3, description="One sentence for the nurse")],
     idempotency_key: Annotated[str, Field(description="Unique per handoff; a retry is not duplicated")],
     summary: Annotated[str | None, Field(description="Short context for the nurse")] = None,
+    interpreter: Annotated[
+        str | None, Field(max_length=40, description="Language the nurse needs an interpreter for, e.g. 'Vietnamese'")
+    ] = None,
 ) -> dict:
     """Hand the case to a nurse. Returns the task with an honest due time (urgent within the hour, routine by
     5 PM on the next business day with capacity). The AI pauses on this case until a nurse hands it back."""
-    return call(store.create_nurse_task, case_id, kind, priority, reason, idempotency_key, summary)
+    return call(store.create_nurse_task, case_id, kind, priority, reason, idempotency_key, summary, interpreter)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})

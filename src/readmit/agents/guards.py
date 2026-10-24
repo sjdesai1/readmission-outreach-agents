@@ -9,10 +9,16 @@ Output: no invented times, no contact details, no diagnosis, no booking claims w
 import re
 from datetime import datetime, timedelta
 
+from readmit.agents.language import fold
 from readmit.agents.state import parse_dt
 
-# Carrier-standard opt-out keywords (the whole message, ignoring case and punctuation)
-STOP_WORDS = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit"}
+# Opt-out keywords: the whole message, ignoring case, accents, spaces and punctuation. Carrier-standard English,
+# plus the Spanish ones carriers and patients use ("PARAR", "BASTA", "NO MÁS"). "Para" alone is left out: it is
+# also "for", and a misread STOP is the one mistake that can't be undone by the next message.
+STOP_WORDS = {
+    "stop", "stopall", "unsubscribe", "cancel", "end", "quit",
+    "parar", "pare", "alto", "basta", "detener", "cancelar", "baja", "nomas", "nomasmensajes",
+}  # fmt: skip
 
 EMERGENCY = [
     r"chest pain",
@@ -130,7 +136,7 @@ def screen_inbound(text: str | None) -> dict:
     """Return {'action': 'continue' | 'opt_out' | 'emergency' | 'third_party', 'flags': [...]}.
     Order matters: an emergency reported by a family member is still an emergency."""
     t = (text or "").strip().lower()
-    if re.sub(r"[^a-z]", "", t) in STOP_WORDS:
+    if re.sub(r"[^a-z]", "", fold(t)) in STOP_WORDS:
         return {"action": "opt_out", "flags": ["stop_keyword"]}
     for pat in EMERGENCY:
         if re.search(pat, t):

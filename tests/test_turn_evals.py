@@ -9,14 +9,14 @@ from readmit.evals.turns import load_cases, run_case, score, summarize
 
 KNOWN = {
     "intent", "route", "route_has", "route_lacks", "action", "status", "nurse", "booked", "booked_count_max",
-    "referral", "remembered", "reply_has_any", "reply_lacks", "no_reply", "status_not",
+    "referral", "remembered", "reply_has_any", "reply_lacks", "no_reply", "status_not", "language", "asked_language",
 }  # fmt: skip
 
 
 def facts(**kw):
     base = {
         "intent": None, "path": [], "action": None, "status": "new", "nurse_task": None, "booked_count": 0,
-        "referrals": [], "memory": [], "sent": [], "reason": None,
+        "referrals": [], "memory": [], "sent": [], "reason": None, "language": "English", "asked_language": False,
     }  # fmt: skip
     return {**base, **kw}
 
@@ -59,7 +59,19 @@ def test_summary_counts_cases_and_checks():
 
 
 @pytest.mark.usefixtures("pg")
-@pytest.mark.parametrize("case_id", ["stop-keyword", "emergency-chest-pain", "first-outreach", "paused-hello"])
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "stop-keyword",
+        "emergency-chest-pain",
+        "first-outreach",
+        "paused-hello",
+        "lang-ask-spanish",
+        "lang-vietnamese",
+        "lang-mismatch-asks-once",
+        "optout-spanish-basta",
+    ],
+)
 def test_rule_routed_cases_pass_with_the_rule_based_agents(case_id):
     case = next(c for c in load_cases() if c["id"] == case_id)
     r = asyncio.run(run_case(case, None))
@@ -79,6 +91,12 @@ def test_red_team_dataset_is_well_formed():
         assert c["defense"] in DEFENSES, c["id"]
         assert set(c["expect"]) <= KNOWN, c["id"]
         assert c["case"] in ("C1", "C2") and c.get("reply") and c.get("channel")
+
+
+def test_language_checks():
+    f = facts(language="Spanish", asked_language=True)
+    assert all(r["ok"] for r in score({"language": "Spanish", "asked_language": True}, f, "C1"))
+    assert [r["ok"] for r in score({"language": "English"}, f, "C1")] == [False, True]
 
 
 def test_status_not_check():

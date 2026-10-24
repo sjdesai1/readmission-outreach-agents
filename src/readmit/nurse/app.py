@@ -32,6 +32,7 @@ with left:
     labels = [
         f"{'🚨 ' if t['kind'] == 'emergency' else '⚠️ ' if t['priority'] == 'urgent' else ''}"
         f"{t['patient']} · {t['kind']} · due {t['due_at'][5:16]}"
+        + (f" · interpreter: {t['interpreter']}" if t.get("interpreter") else "")
         + (f" · {t['minutes_late']} min late" if t["minutes_late"] else "")
         for t in tasks
     ]
@@ -43,6 +44,10 @@ s = view["summary"]
 with right:
     st.subheader(f"{s['patient']['first_name']} · {s['patient']['preferred_language']} · case {task['case_id']}")
     st.write(f"**Task:** {task['kind']} ({task['priority']}) · {task['reason']}")
+    if task.get("interpreter"):
+        st.warning(f"Interpreter needed: {task['interpreter']}. Book one before calling; don't reply in English.")
+    if s["patient"].get("language_source") == "patient":
+        st.caption(f"Language: {s['patient']['preferred_language']} (the patient asked for it)")
     risk = s.get("risk") or {}
     st.write(
         f"**Risk:** {risk.get('tier')} ({risk.get('risk')}) · **Barriers:** {', '.join(risk.get('barriers') or []) or 'none'}"
@@ -58,6 +63,13 @@ with right:
         with st.chat_message(role, avatar="🧑" if role == "user" else ("🩺" if m["author"] == "nurse" else "🤖")):
             st.caption(f"{label} · {m['channel']} · {m['at'][:16]} · {m['status']}")
             st.write(m["body"])
+            if console.needs_translation(m["body"]):
+                t = console.translate(m["body"])
+                st.caption(
+                    f"Machine translation from {t['language']}, check with an interpreter before acting: {t['english']}"
+                    if t
+                    else "Machine translation unavailable."
+                )
 
     allowed = s["contact"]["allowed_channels"]
     with st.form("reply", clear_on_submit=True):

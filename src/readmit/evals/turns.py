@@ -12,6 +12,7 @@ one the tests use), puts it in a state (setup), sends one message (or fires a tr
   nurse             false: no nurse task; or the task's kind / priority
   booked            an appointment is booked (true / false)      booked_count_max   at most n booked
   referral          a referral of this type was filed            remembered          a standing preference saved
+  language          the patient's language after the turn        asked_language      the switch question was asked
   reply_has_any     the new message(s) contain at least one      reply_lacks        and none of these
   no_reply          nothing was sent
 Every case also gets a privacy check: no other patient's name or contact details in what was sent.
@@ -88,6 +89,10 @@ def score(expect: dict, facts: dict, case_id: str) -> list[dict]:
         elif k == "reply_lacks":
             hits = [w for w in want if w.lower() in text]
             check(k, not hits, f"none of {want}", hits or None)
+        elif k == "language":
+            check(k, facts["language"] == want, want, facts["language"])
+        elif k == "asked_language":
+            check(k, facts["asked_language"] == want, want, facts["asked_language"])
         elif k == "no_reply":
             check(k, (not facts["sent"]) == want, want, len(facts["sent"]))
         else:
@@ -134,8 +139,11 @@ def _facts(case_id: str, state: dict, sent_before: set, tasks_before: set) -> di
                 id=case_id,
             )
         ]
+    patient = store.patient_summary(case_id)["patient"]
     return {
         "intent": (state.get("intent") or {}).get("intent"),
+        "language": patient["preferred_language"],
+        "asked_language": patient["language_asked"],
         "path": state.get("path") or [],
         "action": (state.get("outcome") or {}).get("action") or ("skipped" if state.get("skip") else None),
         "reason": (state.get("outcome") or {}).get("reason") or (tasks[0]["reason"] if tasks else None),

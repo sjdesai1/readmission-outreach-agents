@@ -5,6 +5,31 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Added
+- Language preference (ADR 0010). An explicit request ("text me in Spanish", "ESPAÑOL", "en inglés por favor")
+  is caught by the input guard and stored in patient memory through a new `set_language` tool (audited,
+  overrides the record); the reply confirms the switch and offers the times again in the new language. A reply
+  written in the other language gets its normal answer plus one question, asked once per patient. A request for,
+  or a reply in, any other language goes to a nurse task flagged with the interpreter language; the patient gets
+  an acknowledgement in the language on file and the nurse keeps the case
+- agents/language.py: request patterns, detection by script and stopwords (no decision under three words)
+- Spanish opt-out words in the STOP list (PARAR, BASTA, ALTO, NO MÁS, CANCELAR, DETENER, BAJA), accents ignored
+- Interpreter v6: `language_change` intent and `new_language`, a second net behind the rules
+- Nurse screen: machine translation under messages not in English (prompt translate_v1, cached, labeled as
+  machine translation), interpreter flag in the queue and the task header
+- Evals: 12 turn cases (now 53), 3 red-team cases (now 34: Spanish STOP, injection inside a language switch,
+  a diagnosis request in French), 2 conversation personas (switches_language, needs_interpreter; now 22 per seed)
+- Schema: outreach.nurse_tasks.interpreter
+
+### Changed
+- Conversation evals: the abusive persona's goal accepts an opt-out as well as a nurse review ("stop bothering me,
+  you people are useless" is both; the turn eval already accepted either)
+
+### Fixed
+- Scripted patients ignore the once-only language question (its "?" made a booking confirmation look like an offer)
+- A booked patient who replied (a question, a language change) was set back to awaiting_reply, so outreach could
+  offer new times on top of the booked visit; booked cases now stay booked
+
 ## [0.5.0] - Milestone 5
 
 ### Added

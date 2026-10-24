@@ -30,7 +30,13 @@ def tool_names(server):
 
 
 def test_each_server_exposes_only_its_own_tools():
-    assert tool_names(patient_data) == ["get_patient_summary", "remember_preference", "verify_identity"]
+    assert tool_names(patient_data) == [
+        "get_patient_summary",
+        "note_language_question",
+        "remember_preference",
+        "set_language",
+        "verify_identity",
+    ]
     assert tool_names(scheduling) == [
         "book_appointment",
         "cancel_appointment",

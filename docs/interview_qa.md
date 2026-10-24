@@ -182,5 +182,11 @@ A paired A/B on the same 72 cases, with the hypothesis and the primary metric fi
 **Q: What do you monitor?**
 LLM spend against the daily cap, failures and latency by task, the nurse queue and overdue promises, and cases the AI keeps failing on. Two alerts go to email with runbook links. On its first live evaluation the failing-case alert found 40 cases left by a run before the fixes.
 
+**Q: How do you handle patients who don't speak English?**
+Language is a stored fact, decided by code. An explicit request ("text me in Spanish") switches it, with an audit event, and the times are offered again in Spanish. A reply in Spanish from an English-record patient gets one question, asked once: bilingual patients mix languages, and a silent switch could leave them unable to read us. Any language outside English and Spanish goes to a nurse with an interpreter, because nobody has evaluated the model's messages in it. Spanish STOP words are rules, like English ones.
+
+**Q: Why not just let the LLM write in whatever language the patient uses?**
+It probably would, fluently. But an outreach message carries times, dates and a 911 line; the output checks read English and Spanish dates only, and the evals cover only those two. An unchecked message in Vietnamese is a clinical risk I can't measure. Adding a language is templates, date checks and eval cases first, then a config change.
+
 **Q: Why evaluate the rule-based fallback at all?**
 It's what patients get when the budget runs out or the LLM is down. The red team showed the fallback had the only real safety gap.

@@ -22,6 +22,7 @@ from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 # interpret_reply v2: accepts only a specific time, exact time bounds. v3: standing preferences.
 #                 v4: details from the new reply only (not repeated from earlier messages).
 #                 v5: asking what visits or times exist is wants_visit, not question.
+#                 v6: language_change (a second net behind the rule guard), new_language.
 # write_message v5: never says visits or times are available unless offered slots are given.
 #               v6: a booking confirmation never asks the patient to confirm again; names the doctor.
 #               v7: follow-up attempts say so briefly; the last attempt is a phone call.
@@ -31,7 +32,7 @@ from readmit.llm import LLMBudgetExceeded, LLMError, complete_json, load_prompt
 # write_message v2: video vs clinic. v3: mid-conversation replies, own doctor, channel changes.
 #               v4: "clinic visit" label, standing preferences, saying what was remembered.
 PROMPTS = {
-    "interpret_reply": "v5",
+    "interpret_reply": "v6",
     "plan_care": "v1",
     "write_message": "v11",  # A/B vs v10: 7% fewer words, rewrites 15% -> 6%, no case lost
     "schedule_step": "v2",
@@ -52,6 +53,7 @@ Intent = Literal[
     "third_party",
     "wants_human",
     "channel_change",
+    "language_change",
     "symptom",
     "abusive",
     "unclear",
@@ -70,6 +72,7 @@ class ReplyReading(BaseModel):
     latest_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     mode: Literal["in_person", "telehealth"] | None = None
     new_channel: Channel | None = None
+    new_language: str | None = Field(default=None, max_length=40)
     question: str | None = None
     barrier: str | None = None
     standing: bool = False  # the timing/mode preference is ongoing ("I work mornings"), not just this once
@@ -224,6 +227,15 @@ async def care_planner(state: TurnState, gw: Gateway) -> dict:
 
 
 # ------------------------------------------------------------------ message writer (no tools)
+def talking_points(state: TurnState) -> list[str]:
+    """The planner's points, plus facts code owns: a language switch is confirmed in the message itself."""
+    points = list((state.get("plan") or {}).get("talking_points") or [])
+    change = state.get("language_change") or {}
+    if change.get("ok"):
+        points.append(f"confirm that from now on we will write to the patient in {change['now_using']}")
+    return points
+
+
 def message_purpose(state: TurnState) -> str:
     """Code decides what the message is for; the LLM decides how to say it."""
     sched = state.get("schedule") or {}
@@ -238,6 +250,7 @@ def message_purpose(state: TurnState) -> str:
     return {
         "decline": "acknowledge_decline",
         "channel_change": "acknowledge_channel_change",
+        "language_change": "acknowledge_language_change",
         "question": "answer_and_next_step",
         "barrier": "answer_and_next_step",
         "unclear": "clarify",
@@ -274,7 +287,7 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
             if sched.get("appointment")
             else None
         ),
-        "talking_points": plan.get("talking_points") or [],
+        "talking_points": talking_points(state),
         "scheduling_note": sched.get("note"),
         "approach": plan.get("approach"),
         "what_patient_said": (state.get("intent") or {}).get("details"),
@@ -330,8 +343,8 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
     supplies case_id and idempotency keys, and only slots returned by find_slots in this turn that fit the
     patient's request can be booked.
     """
-    if state.get("trigger") != "inbound_reply":
-        return await stubs.scheduler(state, gw)  # cheapest path that does the job
+    if state.get("trigger") != "inbound_reply" or (state.get("intent") or {}).get("intent") == "language_change":
+        return await stubs.scheduler(state, gw)  # just offer times (again): the cheapest path that does the job
     try:
         if await stubs.picked_offer(state, gw):  # "the first one": the store knows which slot that was
             return await stubs.scheduler(state, gw)
@@ -491,7 +504,8 @@ async def safety_reviewer(state: TurnState, gw: Gateway) -> dict:
                 else None
             ),
             "channel_change": state.get("channel_change"),
-            "talking_points": (state.get("plan") or {}).get("talking_points") or [],
+            "language_change": state.get("language_change"),
+            "talking_points": talking_points(state),
             "scheduling_note": sched.get("note"),
         },
         "draft": state["draft"],
