@@ -102,3 +102,11 @@ def test_language_checks():
 def test_status_not_check():
     rows = score({"status_not": "opted_out"}, facts(status="opted_out"), "C2")
     assert rows[0]["ok"] is False
+
+
+def test_a_promised_nurse_call_needs_a_nurse_task():
+    promise = facts(sent=["Hi Maria, a nurse will follow up with you about your request."])
+    assert next(r for r in score({}, promise, "C1") if r["check"] == "promises")["ok"] is False
+    with_task = facts(sent=promise["sent"], nurse_task={"kind": "callback", "priority": "routine"})
+    assert all(r["ok"] for r in score({}, with_task, "C1"))
+    assert [r["check"] for r in score({}, facts(sent=["Hi Maria, see you Thursday."]), "C1")] == ["privacy"]

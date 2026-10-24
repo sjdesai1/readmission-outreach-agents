@@ -8,7 +8,15 @@ import re
 
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import search_window, slot_fits
-from readmit.agents.state import TurnState, picked_option, request_details, standing_details, when, when_es
+from readmit.agents.state import (
+    TurnState,
+    on_file,
+    picked_option,
+    request_details,
+    standing_details,
+    when,
+    when_es,
+)
 
 
 async def care_planner(state: TurnState, gw: Gateway) -> dict:
@@ -23,18 +31,29 @@ async def care_planner(state: TurnState, gw: Gateway) -> dict:
         "referrals": [],
         "referrals_filed": [],
     }
-    if "transport_barrier" in barriers:  # the one barrier with a direct fix: a ride, or a video visit
-        plan["talking_points"].append("we can arrange a ride, or do a video visit from home")
+    video = contact.get("telehealth_ok")
+    fixes = {  # barriers with a direct fix: (referral, reason, talking point)
+        "transport_barrier": (
+            "transport",
+            "patient has no transportation to the follow-up visit",
+            "we can arrange a ride, or do a video visit from home" if video else "we can arrange a ride",
+        ),
+        "cost_barrier": ("social_work", "patient worried about the cost of the visit", "a social worker can help"),
+    }
+    for barrier, (ref, reason, point) in fixes.items():
+        if barrier not in barriers:
+            continue
+        plan["talking_points"].append(point)
         try:
             await gw.call(
                 "referrals",
                 "create_referral",
                 case_id=state["case_id"],
-                referral_type="transport",
-                reason="patient has no transportation to the follow-up visit",
-                idempotency_key=f"{state['case_id']}:ref:transport",  # one ride referral per case
+                referral_type=ref,
+                reason=reason,
+                idempotency_key=f"{state['case_id']}:ref:{ref}",  # one referral per type per case
             )
-            plan["referrals_filed"].append("transport")
+            plan["referrals_filed"].append(ref)
         except ToolFailed:
             pass
     return {"plan": plan}
@@ -46,7 +65,14 @@ SPECIFIC_TIME = (
     r"sábado|domingo|tarde|noche)\b"
 )
 STUB_INTENTS = [  # keyword rules, first match wins: enough for free simulation runs, not for production
-    ("symptom", r"\b(swollen|swelling|hinchad\w*|dizzy|mareado|fever|fiebre|short of breath)\b"),
+    (  # first: a symptom inside a yes still goes to a nurse ("yes the first one, my legs are a bit puffy")
+        "symptom",
+        (
+            r"\b(swollen|swelling|swell\w*|puff\w*|hinchad\w*|dizzy|mareado|fever|fiebre|short of breath"
+            r"|shoes (are|feel) tight|can'?t catch my breath|gained \d+ (pounds|lbs?|kilos?)"
+            r"|breathing (feels|is|got) (heavier|harder|worse))\b"
+        ),
+    ),
     (
         "clinical_question",
         (
@@ -54,10 +80,36 @@ STUB_INTENTS = [  # keyword rules, first match wins: enough for free simulation 
             r"pastillas|medicina|dosis)\b"
         ),
     ),
-    ("barrier", r"\b(ride|transport\w*|no car|can'?t get there)\b"),
+    (
+        "barrier",
+        (
+            r"\b(ride|transport\w*|no car|can'?t get there|afford|copay|co-pay|too expensive|money|traslado"
+            r"|transporte|no tengo (carro|coche)|pagar|dinero|copago)\b"
+        ),
+    ),
     ("wants_human", r"\b(nurse|real person|call me|enfermera)\b"),
     ("abusive", r"\b(useless|idiots?|stupid|regret it|hurt (you|someone|somebody)|kill (you|someone))\b"),
 ]
+
+
+VIDEO = r"\b(video|virtual|from home|por video|desde casa|videollamada)\b"
+WORKS = r"\bwork(s|ing)? (in the )?(mornings?|afternoons?)\b|\btrabajo (por la|en las) (mañanas?|tardes?)\b"
+STANDING = r"\b(always|usually|every|never|work|siempre|nunca|trabajo)\b"
+
+
+def scheduling_details(t: str) -> tuple[dict, bool]:
+    """Visit type and time of day a reply asks for, and whether it's a standing preference. "I work mornings"
+    means afternoons; "afternoons" or "por la tarde" means afternoons."""
+    details: dict = {}
+    if re.search(VIDEO, t):
+        details["mode"] = "telehealth"
+    if m := re.search(WORKS, t):
+        details["part_of_day"] = "afternoon" if re.search(r"morning|mañana", m.group(0)) else "morning"
+    elif re.search(r"\bafternoons?\b|\bpor la tarde\b|\bafter lunch\b", t):
+        details["part_of_day"] = "afternoon"
+    elif re.search(r"\bmornings?\b|\bpor la mañana\b", t):
+        details["part_of_day"] = "morning"
+    return details, bool(details.get("part_of_day")) and bool(re.search(STANDING, t))
 
 
 async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
@@ -66,14 +118,17 @@ async def reply_interpreter(state: TurnState, gw: Gateway) -> dict:
         if re.search(pattern, t):
             details = {"barrier": (state.get("inbound") or "")[:200]} if name == "barrier" else {}
             return {"intent": {"intent": name, "accepts": False, "details": details}}
+    details, standing = scheduling_details(t)
     if picked_option(t) is not None:  # "the second one", "2"
-        intent = {"intent": "wants_visit", "accepts": True, "details": {}}
+        intent = {"intent": "wants_visit", "accepts": True, "details": details}
     elif re.search(r"\b(yes|book|sure|ok|okay|first|works|sí|si|primera|primero)\b", t):
         # a yes with its own time or day ("book me yesterday at 3 AM") is not a yes to our options: offer, don't book
         accepts = picked_option(t) is not None or not re.search(SPECIFIC_TIME, t)
-        intent = {"intent": "wants_visit", "accepts": accepts, "details": {}}
+        intent = {"intent": "wants_visit", "accepts": accepts, "details": details}
     elif re.search(r"\b(no thanks|not interested|don'?t need)\b", t):
         intent = {"intent": "decline", "accepts": False, "details": {}}
+    elif details:  # "afternoons are always better", "could we do video?": a request for times
+        intent = {"intent": "wants_visit", "accepts": False, "details": details, "standing": standing}
     elif "?" in t:
         intent = {"intent": "question", "accepts": False, "details": {}}
     else:
@@ -98,7 +153,7 @@ async def picked_offer(state: TurnState, gw: Gateway) -> dict | None:
 
 
 async def _fitting(gw: Gateway, case_id: str, details: dict, now: str) -> list[dict]:
-    """Up to 3 open slots that fit `details` (days, time of day, time bounds)."""
+    """Up to 3 open slots that fit `details` (visit type, days, time of day, time bounds)."""
     earliest, latest = search_window(details, now)
     found = (
         await gw.call(
@@ -107,6 +162,7 @@ async def _fitting(gw: Gateway, case_id: str, details: dict, now: str) -> list[d
             case_id=case_id,
             earliest=earliest,
             latest=latest,
+            mode=details.get("mode"),
             part_of_day=details.get("part_of_day"),
             limit=10,
         )
@@ -115,14 +171,37 @@ async def _fitting(gw: Gateway, case_id: str, details: dict, now: str) -> list[d
     return [s for s in found if not slot_fits(s["start_at"], details)][:3]
 
 
+def _usable(details: dict, telehealth_ok: bool) -> dict:
+    """A video request from a patient who can't do video (no consent or device) can't be searched for."""
+    if details.get("mode") == "telehealth" and not telehealth_ok:
+        return {k: v for k, v in details.items() if k != "mode"}
+    return details
+
+
 async def scheduler(state: TurnState, gw: Gateway) -> dict:
     case_id, intent = state["case_id"], state.get("intent") or {}
-    details = request_details(state)  # this reply on top of standing preferences
+    telehealth_ok = bool(state["summary"]["contact"].get("telehealth_ok"))
+    asked = request_details(state)  # this reply on top of standing preferences
+    no_video = asked.get("mode") == "telehealth" and not telehealth_ok  # the message must say why: clinic only
+    details = _usable(asked, telehealth_ok)
     note = None
+
+    def result(offered, appointment, note):
+        return {
+            "schedule": {
+                "offered": offered,
+                "appointment": appointment,
+                "error": None,
+                "note": note,
+                "video_unavailable": no_video,
+            }
+        }
+
     try:
         picked = await picked_offer(state, gw)
-        if picked and picked["slot"] and picked["slot"]["still_open"]:
-            slot = picked["slot"]
+        slot = picked["slot"] if picked else None
+        other_mode = bool(slot and details.get("mode") and slot["mode"] != details["mode"])
+        if slot and slot["still_open"] and not other_mode:
             appointment = await gw.call(
                 "scheduling",
                 "book_appointment",
@@ -132,20 +211,23 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
             )
             appointment["when"] = when(appointment["start_at"])
             appointment["provider"] = slot["provider"]
-            return {"schedule": {"offered": [], "appointment": appointment, "error": None, "note": None}}
-        if picked:  # they picked a time that's gone (taken, or too soon now): never book a different one for them
-            gone = picked["slot"]
+            return result([], appointment, None)
+        if slot and slot["still_open"]:  # "a video visit would work, the first one is fine" when the first is clinic
+            note = f"the patient asked for a {how(details['mode'])}, not the time they picked; offer these instead"
+        elif picked:  # they picked a time that's gone (taken, or too soon now): never book a different one for them
             note = (
-                f"the time the patient picked ({when(gone['start_at'])}) is no longer open; offer these instead"
-                if gone
+                f"the time the patient picked ({when(slot['start_at'])}) is no longer open; offer these instead"
+                if slot
                 else f"the patient picked option {picked['option']}, which we didn't offer; offer these"
             )
             # "the first one" only named that time: what an interpreter read into it (its day, its time of day) is
-            # not a new request. Search again with the standing preferences alone.
-            details = standing_details(state)
+            # not a new request. Search again with the standing preferences, and a visit type they asked for.
+            details = _usable(
+                standing_details(state) | ({"mode": details["mode"]} if details.get("mode") else {}), telehealth_ok
+            )
         fitting = await _fitting(gw, case_id, details, state["now"])
         if not fitting:  # nothing matches this request: keep the standing preferences if any, then anything
-            standing = standing_details(state)
+            standing = _usable(standing_details(state), telehealth_ok)
             if standing and standing != details:
                 fitting = await _fitting(gw, case_id, standing, state["now"])
             if not fitting:
@@ -175,7 +257,7 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
             appointment["provider"] = offered[0]["provider"]
     except ToolFailed as e:
         return {"schedule": {"offered": [], "appointment": None, "error": e.message}}
-    return {"schedule": {"offered": offered, "appointment": appointment, "error": None, "note": note}}
+    return result(offered, appointment, note)
 
 
 def how(mode: str) -> str:
@@ -196,12 +278,20 @@ TEXT = {  # the rule-based writer's templates; also what patients get when the L
         "options": "Open times: {options}. Reply with the number that works for you.",
         "channel_ok": "Thanks {name}, we'll use this channel from now on.",
         "language_ok": "Thanks {name}, we'll write to you in English from now on.",
-        "channel_no": "Thanks {name}. We can't switch to that channel yet; a nurse will help update your contact "
-        "details.",
+        "channel_no": "Thanks {name}. We can't switch to that channel yet. Reply NURSE if you'd like a nurse to help "
+        "update your contact details.",
         "barrier": "Thanks for telling us, {name}. We can help: a video visit from home is an option, and our team "
         "can arrange a ride. Would you like us to find a time?",
+        "barrier_ride": "Thanks for telling us, {name}. We can help: our team can arrange a ride to your visit. "
+        "Would you like us to find a time?",
+        "barrier_cost": "Thanks for telling us, {name}. A social worker from our team can help with the cost of the "
+        "visit. Would you like us to find a time?",
+        "barrier_other": "Thanks for telling us, {name}. We'd like to make this visit work for you. Would you like "
+        "us to find a time?",
         "decline": "Thanks for letting us know, {name}. If you change your mind, just reply to this message.",
-        "question": "Thanks for your question, {name}. A nurse from your care team will follow up with you.",
+        "question": "Thanks for your question, {name}. A nurse can help with it: reply NURSE if you'd like a call.",
+        "no_video": "Video visits aren't set up for you yet, so this is a clinic visit.",
+        "ride": "Our team is arranging your ride.",
         "unclear": "Sorry {name}, we didn't quite understand. Would you like us to book a follow-up visit? "
         "Reply YES or NO.",
     },
@@ -217,12 +307,22 @@ TEXT = {  # the rule-based writer's templates; also what patients get when the L
         "options": "Horarios: {options}. Responda con el número que le funcione.",
         "channel_ok": "Gracias {name}, usaremos este medio desde ahora.",
         "language_ok": "Gracias {name}, desde ahora le escribiremos en español.",
-        "channel_no": "Gracias {name}. Todavía no podemos usar ese medio; una enfermera le ayudará a actualizar sus "
-        "datos de contacto.",
+        "channel_no": "Gracias {name}. Todavía no podemos usar ese medio. Responda ENFERMERA si quiere que una "
+        "enfermera le ayude a actualizar sus datos de contacto.",
         "barrier": "Gracias por contarnos, {name}. Podemos ayudar: una visita por video desde casa es una opción, y "
         "nuestro equipo puede organizar transporte. ¿Quiere que busquemos una hora?",
+        "barrier_ride": "Gracias por contarnos, {name}. Podemos ayudar: nuestro equipo puede organizar transporte a "
+        "su visita. ¿Quiere que busquemos una hora?",
+        "barrier_cost": "Gracias por contarnos, {name}. Una trabajadora social de nuestro equipo puede ayudarle con "
+        "el costo de la visita. ¿Quiere que busquemos una hora?",
+        "barrier_other": "Gracias por contarnos, {name}. Queremos que esta visita funcione para usted. ¿Quiere que "
+        "busquemos una hora?",
         "decline": "Gracias por avisarnos, {name}. Si cambia de opinión, responda a este mensaje.",
-        "question": "Gracias por su pregunta, {name}. Una enfermera de su equipo le contactará.",
+        "question": "Gracias por su pregunta, {name}. Una enfermera puede ayudarle: responda ENFERMERA si quiere "
+        "que le llamen.",
+        "no_video": "Las visitas por video aún no están disponibles para usted, así que esta es una visita en la "
+        "clínica.",
+        "ride": "Nuestro equipo está organizando su transporte.",
         "unclear": "Disculpe {name}, no entendimos bien. ¿Quiere que reservemos una visita de seguimiento? "
         "Responda sí o no.",
     },
@@ -242,22 +342,42 @@ async def message_writer(state: TurnState, gw: Gateway) -> dict:
 
     sched = state.get("schedule") or {}
     intent = (state.get("intent") or {}).get("intent")
+    barriers = set(((state["summary"].get("risk") or {}).get("barriers")) or [])
+    rides = "transport" in on_file(state) and "transport_barrier" in barriers  # only what's arranged (ADR 0011)
     if sched.get("appointment"):
         w, h = show(sched["appointment"])
         body = t["booked"].format(name=name, when=w, how=h)
+        if sched.get("video_unavailable"):
+            body += " " + t["no_video"]
+        if rides and sched["appointment"].get("mode") != "telehealth":
+            body += " " + t["ride"]
     elif sched.get("offered"):
         options = "; ".join(f"{i}) {w} ({h})" for i, (w, h) in enumerate(map(show, sched["offered"]), 1))
         gone = "no longer open" in (sched.get("note") or "")
         opening = t["gone"] if gone else t.get((state.get("case") or {}).get("rebook_reason") or "intro") or t["intro"]
         if intent == "language_change":  # confirm the switch, then the times again in the new language
             opening = t["language_ok"]
+        if sched.get("video_unavailable"):
+            opening += " " + t["no_video"].replace("this is a clinic visit", "these are clinic visits").replace(
+                "esta es una visita en la clínica", "estas son visitas en la clínica"
+            )
         body = f"{opening.format(name=name)} {t['options'].format(options=options)}"
     elif intent == "channel_change":
         ok = (state.get("channel_change") or {}).get("ok")
         body = t["channel_ok" if ok else "channel_no"].format(name=name)
     elif intent == "language_change":
         body = t["language_ok"].format(name=name)
-    elif intent in ("barrier", "decline", "question"):
+    elif intent == "barrier":
+        this = state.get("barrier") or next(iter(barriers & {"transport_barrier", "cost_barrier"}), None)
+        video = state["summary"]["contact"].get("telehealth_ok")
+        key = {
+            "transport_barrier": "barrier" if video else "barrier_ride",
+            "cost_barrier": "barrier_cost",
+        }.get(this, "barrier_other")
+        if key in ("barrier", "barrier_ride") and "transport" not in on_file(state):
+            key = "barrier_other"  # never offer a ride nobody has been asked to arrange
+        body = t[key].format(name=name)
+    elif intent in ("decline", "question"):
         body = t[intent].format(name=name)
     else:
         body = t["unclear"].format(name=name)

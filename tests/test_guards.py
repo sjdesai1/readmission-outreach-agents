@@ -103,3 +103,28 @@ def test_spanish_dates_are_checked_and_tuesday_is_not_march():
 def test_more_emergency_phrasings_in_both_languages():
     for text in ("Me falta el aire desde anoche", "me duele el pecho", "my chest hurts a lot", "me desmayé hoy"):
         assert screen_inbound(text)["action"] == "emergency", text
+
+
+def test_promises_need_something_on_file():
+    from readmit.agents.guards import check_promises
+
+    assert check_promises("A nurse will follow up with you about your request.", set(), True)
+    assert check_promises("Una enfermera de su equipo se comunicará con usted.", set(), True)
+    assert check_promises("Reply NURSE if you'd like a call. A nurse can help.", set(), True) == []
+    assert check_promises("Nurse Kim called you yesterday.", set(), True) == []
+    bad = check_promises("Podemos organizar un traslado gratis. Un intérprete le acompañará.", set(), True)
+    assert len(bad) == 2  # ride, interpreter: nothing on file for either
+    assert check_promises("Our team is arranging your ride.", {"transport"}, True) == []
+    assert check_promises("We could do a video visit instead.", set(), telehealth_ok=False)
+    assert check_promises("Video visits aren't set up for you yet, so this is a clinic visit.", set(), False) == []
+    assert check_promises("Feel free to reply with a number.", set(), True) == []
+
+
+def test_spanish_messages_use_usted():
+    ok = "Hola Jose, su visita es el jue 10 sep, 9:00 AM. Responda si necesita cambiarla."
+    slots = [{"start_at": "2026-09-10T09:00"}]
+    assert check_draft(ok, "sms", slots, None, language="Spanish") == []
+    bad = check_draft("Hola Jose, tu visita es el jue 10 sep, 9:00 AM. Responde si puedes.", "sms", slots, None,
+                      language="Spanish")  # fmt: skip
+    assert any("usted" in p for p in bad)
+    assert check_draft("Hi Maria, see you then.", "email", [], None, language="English") == []

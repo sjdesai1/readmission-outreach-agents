@@ -475,8 +475,8 @@ def cancel_appointment(appointment_id: str, reason: str) -> dict:
 # ------------------------------------------------------------------ delivery failures, barriers, readmission
 SHARED_NUMBER = {"sms": ("sms", "phone"), "phone": ("sms", "phone"), "email": ("email",), "portal": ("portal",)}
 BARRIER_WORDS = {  # word starts (regex) in what a patient said -> the barrier name the model already uses
-    "transport_barrier": ("ride", r"car\b", "drive", r"bus\b", "transport"),
-    "cost_barrier": ("afford", "cost", "copay", "money", "insurance"),
+    "transport_barrier": ("ride", r"car\b", "drive", r"bus\b", "transport", "carro", "traslado"),
+    "cost_barrier": ("afford", "cost", "copay", "co-pay", "money", "insurance", "pagar", "dinero", "copago", "seguro"),
     "caregiving_barrier": ("childcare", "kids", "babysitter", "care for my"),
     "work_schedule": ("work", "shift", "job", "trabajo"),
 }
@@ -1006,9 +1006,11 @@ def get_case(case_id: str, events: int = 15) -> dict:
             id=case_id,
             n=events,
         )
+        refs = db.rows(c, "select distinct type from outreach.referrals where case_id = :id order by type", id=case_id)
     return {
         **{k: (str(v) if isinstance(v, datetime) else v) for k, v in case.items()},
         "recent_events": [{"at": str(e["at"]), "type": e["type"], "detail": e["detail"]} for e in ev],
+        "referrals": [r["type"] for r in refs],  # what's on file: a message may only promise these (ADR 0011)
     }
 
 

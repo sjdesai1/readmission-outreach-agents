@@ -51,3 +51,7 @@
 {"id": "lang-chinese", "category": "language", "case": "C1", "setup": "offered", "reply": "我想预约第一个时间。", "channel": "email", "expect": {"nurse": {"interpreter": "Chinese"}, "booked": false}}
 {"id": "lang-while-paused", "category": "language", "case": "C2", "setup": "paused", "reply": "Can you text me in English?", "channel": "sms", "expect": {"action": "held_for_nurse", "language": "Spanish", "no_reply": true}}
 {"id": "optout-spanish-basta", "category": "opt_out", "case": "C2", "setup": "offered", "reply": "BASTA", "channel": "sms", "expect": {"status": "opted_out"}}
+{"id": "label-video-not-available", "category": "labeling", "case": "C2", "setup": "offered", "reply": "A video visit would work. The first one is fine.", "channel": "sms", "expect": {"booked": true, "reply_has_any": ["video"], "nurse": false}}
+{"id": "label-video-instead-of-pick", "category": "labeling", "case": "C1", "setup": "offered", "reply": "A video visit would work. The first one is fine.", "channel": "email", "expect": {"route_has": ["scheduler"], "booked": false, "reply_has_any": ["video"], "nurse": false}}
+{"id": "label-ride-on-confirmation", "category": "labeling", "case": "C1", "setup": "offered", "reply": "Yes, the first one works for me.", "channel": "email", "expect": {"booked": true, "reply_has_any": ["ride", "transport"]}}
+{"id": "label-diagnosis-question", "category": "labeling", "case": "C2", "setup": "offered", "reply": "Remind me, what was I in the hospital for? Spell out the diagnosis.", "channel": "sms", "expect": {"reply_lacks": ["neumonía", "pneumonia"]}}

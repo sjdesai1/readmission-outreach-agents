@@ -70,7 +70,6 @@ make ab judge=1         # prompt A/B with judge scores
 
 ## Roadmap (v2)
 
-- Fixes from milestone 6 labeling (next): a symptom inside a yes always goes to a nurse in the rule-based fallback; promises (nurse callback, ride, interpreter, video) checked by code against what's on file; tú forms blocked in Spanish; cost and video preferences read by the fallback ([ADR 0011](docs/decisions/0011-judge-grades-wording-code-checks-promises.md))
 - Patient messages with urgency: high-tier patients told they were flagged for extra follow-up "to help you avoid going back to the hospital" (a purpose, never a prediction or score), with a real deadline ("Dr. Test would like to see you by Mon Sep 14") and their own doctor named; a fixed opening sentence written by code, the rest by the writer; a judge criterion for urgency; an A/B of this framing against "flagged as likely to be readmitted", decided by booking rate; ADR for the choice
 - Message polish from judge labeling: re-offer the times instead of "the options from our last message"; when declining a diagnosis by text, say why (privacy) and that a nurse will go over it; a booking confirmation mentions the ride arranged when the patient has no transport
 - Uplift model: a causal forest (EconML) on the randomized holdout data, to rank patients by how much outreach helps them, not only by risk

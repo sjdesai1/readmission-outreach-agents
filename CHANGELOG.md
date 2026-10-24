@@ -5,6 +5,46 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Fixed
+Found by labeling real messages in milestone 6 (ADR 0011); each has a test in tests/test_labeling_fixes.py and the
+turn evals have 4 new cases built from the labeled messages (57 now).
+- A symptom inside a yes ("yes the first one, my legs are a bit puffy") was booked by the rule-based fallback
+  instead of going to a nurse: more everyday symptom words (puffy, shoes tight, can't catch my breath, gained N
+  pounds, breathing heavier), still checked before any yes
+- Promises checked by code: a drafted message that promises a nurse call (the writer never creates a nurse task),
+  a ride or an interpreter with no referral on file, anything free, or video for a patient without telehealth goes
+  back to the writer, then to a nurse. A sentence saying a service is not available promises nothing. get_case
+  now returns the referral types on file. The rule-based "a nurse will follow up" reply now says "reply NURSE if
+  you'd like a call"
+- Spanish messages must use usted: tú forms fail the output checks
+- The rule-based barrier reply offered video to patients who can't do video; it now leads with the ride for them,
+  offers a social worker for cost worries, and promises nothing for other barriers
+- The rule-based fallback reads more: cost words are a barrier (social work referral), "video" or "por video" a
+  visit type, "I work mornings" or "afternoons" a time of day (standing when it says always, never, work)
+- A reply asking for video while picking a clinic time ("a video visit would work, the first one is fine") was
+  booked into the clinic: it now gets video times, or, for a patient without telehealth, the clinic booking with
+  a line saying video isn't set up for them
+- A clinic booking for a patient with a transport barrier says the ride is being arranged (only when the
+  referral is on file)
+- Turn evals: every case whose messages promise a service gets a "promises" check: a nurse task from the turn or
+  a referral must back it
+- Writer prompt v12: v11 told the writer to say "a nurse will follow up" after a medical question and for a failed
+  channel change; v12 never promises a nurse call (reply NURSE instead) or a service that isn't listed. Found
+  because the new promise check rejected v11's drafts twice, sending the case to a nurse
+- Reply keywords the system asks for (NURSE, ENFERMERA, ENGLISH, ESPAÑOL) are allowed in capitals
+- Scripted patients answer up to 3 new offers after their script (re-applied: the earlier fix hadn't landed)
+- An LLM outage (rate limit, both models down) while reading a reply now reads it with rules, like the spend cap
+  (ADR 0013). It used to send every reply to a nurse: a free-tier quota running out mid-run turned 11 of 22
+  conversations into nurse tasks and circuit-breaker closures
+- The writer gets the clinic's facts (address, parking, visit length, what to bring, rides) and answers from them;
+  it had answered "is there parking?" by inventing "free parking". The "free" promise check is dropped: what's free
+  is now a fact the writer is given, and a regex can't tell what "free" refers to
+- Conversation evals check each message against the patient's language at that moment: a logged switch (asked
+  for, or after 3 replies) moves it. Scripted Jose writes English in some personas and is now, correctly, switched
+- Language (ADR 0012): a plain "sí" to the language question switches; after the question, 3 replies in a row
+  in the other language switch it, with a notice and a one-word way back; an interpreter task for a message we
+  can't read is urgent; Vietnamese typed without accents is detected
+
 ## [0.6.0] - Milestone 6
 
 ### Added

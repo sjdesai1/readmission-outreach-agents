@@ -59,6 +59,8 @@ STOPWORDS = {
     "Portuguese": {"voce", "obrigado", "obrigada", "nao", "sim", "estou", "tambem", "muito", "eu", "meu", "minha", "consulta"},
     "French": {"je", "vous", "merci", "oui", "pas", "suis", "avec", "pour", "mon", "rendez", "bonjour", "est"},
     "Tagalog": {"ako", "po", "salamat", "hindi", "ang", "ng", "mga", "sa", "ko", "opo", "kailangan", "ninyo", "ito"},
+    # Vietnamese typed without its accents (common on phones): the letter check below can't see it
+    "Vietnamese": {"toi", "khong", "duoc", "cua", "nay", "hieu", "xin", "chao", "nhan", "vien", "benh", "muon", "lam"},
 }  # fmt: skip
 SCRIPTS = [  # (unicode range, language): a reply written in this script is in this language
     (r"[぀-ヿ]", "Japanese"),  # kana first: Japanese also uses Chinese characters
@@ -72,6 +74,15 @@ SCRIPTS = [  # (unicode range, language): a reply written in this script is in t
 ]
 VIETNAMESE = re.compile(r"[ăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]", re.IGNORECASE)
 
+SWITCHED = {  # appended by code when the language is switched after repeated replies: says so, and the way back
+    "Spanish": "Como nos escribe en español, desde ahora le escribiremos en español. Si prefiere inglés, responda "
+    "ENGLISH.",
+    "English": "Since you write to us in English, we'll write in English from now on. Si prefiere español, responda "
+    "ESPAÑOL.",
+}
+SWITCH_AFTER = 3  # replies in a row in the other supported language, after the question, switch with a notice
+YES = {"si", "yes", "claro", "por favor", "si por favor", "yes please", "sure", "dale", "si gracias", "yes thanks"}
+# "ok" is left out: after a booking confirmation it acknowledges the booking, not the language question
 QUESTION = {  # appended by code, once per patient, when they write in the other supported language
     "Spanish": "¿Prefiere recibir nuestros mensajes en español? Responda ESPAÑOL.",
     "English": "Would you prefer our messages in English? Reply ENGLISH.",
@@ -113,21 +124,44 @@ def detect(text: str | None) -> str | None:
     return None
 
 
-def screen(text: str | None, preferred: str, asked: bool) -> dict:
+def answered_question(text: str | None, last_outbound: str | None) -> str | None:
+    """A plain yes ("sí", "claro", "yes please") right after we asked whether they prefer a language: that language.
+    The question asks for ESPAÑOL, but people answer "sí"; code knows what was just asked, the text alone doesn't."""
+    asked = next((lang for lang, q in QUESTION.items() if q in (last_outbound or "")), None)
+    if asked and fold(text).strip(" .!?¡¿,") in YES:
+        return asked
+    return None
+
+
+def screen(
+    text: str | None,
+    preferred: str,
+    asked: bool,
+    last_outbound: str | None = None,
+    recent_inbound: list[str] | None = None,
+) -> dict:
     """What to do about language for one reply. Run only after STOP, emergencies, third parties and the phone
     identity check: those come first whatever the language.
 
-    {'action': 'language_change', 'language': ...}   explicit request for the other supported language
-    {'action': 'interpreter', 'language': ...}       request for, or reply in, an unsupported language
+    {'action': 'language_change', 'language': ...}   explicit request, or a yes to our question
+    {'action': 'interpreter', 'language': ..., 'unread': bool}
+                                                     request for, or reply in, an unsupported language (unread: we
+                                                     can't read what they wrote, so it could be urgent)
+    {'action': 'continue', 'switch': ...}            asked already, and the last 3 replies are in the other supported
+                                                     language: switch, with a notice and a one-word way back
     {'action': 'continue', 'ask': ...}               written in the other supported language: ask once
     {'action': 'continue'}                           nothing to do
+    recent_inbound: the patient's recent replies, oldest first, this one last.
     """
-    want = requested(text)
+    want = requested(text) or answered_question(text, last_outbound)
     if want and want != preferred:
         return {"action": "language_change" if want in SUPPORTED else "interpreter", "language": want}
     wrote = detect(text)
     if wrote and wrote not in SUPPORTED:
-        return {"action": "interpreter", "language": wrote}
+        return {"action": "interpreter", "language": wrote, "unread": True}
+    last = (recent_inbound or [])[-SWITCH_AFTER:]
+    if wrote and wrote != preferred and asked and len(last) == SWITCH_AFTER and all(detect(t) == wrote for t in last):
+        return {"action": "continue", "switch": wrote}
     if wrote and wrote != preferred and not asked and not want:
         return {"action": "continue", "ask": wrote}
     return {"action": "continue"}

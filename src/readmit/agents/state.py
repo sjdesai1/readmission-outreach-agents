@@ -45,7 +45,10 @@ class TurnState(TypedDict, total=False):
     language_change: dict  # result of a requested language change (ok, now_using, previous)
     interpreter: str | None  # the patient needs a nurse with an interpreter for this language
     ask_language: str | None  # they wrote in the other supported language: ask once whether to switch
+    auto_language: str | None  # asked already, and their last replies are all in this language: switch, with notice
+    interpreter_urgent: bool  # the reply is in a language we can't read: it could be a symptom
     remembered: list[str]  # standing preferences saved this turn ("I work mornings")
+    barrier: str | None  # the barrier the patient told us about this turn, by name ("transport_barrier")
     escalate_reason: str | None
     urgent: bool
     nurse_task: dict  # the handoff created by escalate (kind, priority, honest due time)
@@ -86,6 +89,13 @@ def request_details(state: TurnState) -> dict:
 def standing_details(state: TurnState) -> dict:
     """The patient's standing scheduling preferences alone ("I work mornings"), without this reply's details."""
     return {k: v for k, v in ((state.get("summary") or {}).get("memory") or {}).items() if v not in (None, [], "")}
+
+
+def on_file(state: TurnState) -> set[str]:
+    """Referral types filed for this case, before or during this turn: what a message may promise (ADR 0011)."""
+    return set((state.get("case") or {}).get("referrals") or []) | set(
+        (state.get("plan") or {}).get("referrals_filed") or []
+    )
 
 
 def reply_channel(state: TurnState) -> str | None:

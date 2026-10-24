@@ -51,3 +51,14 @@ class Settings:
 
 
 settings = Settings()
+
+# What the outreach may tell patients about the clinic (simulated). The writer answers "where do I park?" from this
+# instead of inventing an answer; the reviewer and the judge check messages against it.
+CLINIC = {
+    "name": "Orchard Valley Clinic",
+    "address": "1200 Orchard Avenue, Suite 3",
+    "parking": "free parking in the lot behind the clinic",
+    "visit_length": "about 30 minutes",
+    "bring": "your medications or a list of them, and your insurance card",
+    "rides": "rides arranged by the care team are free",
+}

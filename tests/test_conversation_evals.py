@@ -76,6 +76,7 @@ def test_after_switching_every_ai_message_is_spanish():
         msg("outbound", "Hi Maria, here are the times again.", hour=12),
     ]
     f = facts(status="booked", messages=m, language="Spanish", language_source="patient",
+              language_changes=[(datetime(2026, 9, 9, 11, 0), "Spanish")],
               appointments=[{"status": "booked", "start_at": datetime(2026, 9, 10, 9), "mode": "in_person"}])  # fmt: skip
     assert failed(score("switches_language", "C1", f)) == ["language"]  # the English one after the request
     m[2] = msg("outbound", "Hola Maria, aquí tiene los horarios otra vez.", hour=12)
@@ -125,3 +126,14 @@ def test_summary_rates():
 def test_silent_and_opt_out_conversations_reach_their_goals_with_the_rule_based_agents():
     results = asyncio.run(run_pair("silent", "opt_out", 1, None))
     assert all(r["passed"] for r in results), [(r["persona"], [c for c in r["checks"] if not c["ok"]]) for r in results]
+
+
+def test_after_a_switch_to_english_jose_may_get_english():
+    m = [
+        msg("outbound", "Hola Jose, horarios: 1) jue 10 sep, 9:00 AM.", hour=9, channel="sms"),
+        msg("inbound", "Thanks. The first one works.", hour=10, channel="sms"),
+        msg("outbound", "Hi Jose, your visit is booked for Thu Sep 10, 9:00 AM.", hour=11, channel="sms"),
+    ]
+    switched = facts(status="booked", messages=m, language_changes=[(datetime(2026, 9, 9, 11, 0), "English")])
+    assert "language" not in failed(score("engaged", "C2", switched))
+    assert "language" in failed(score("engaged", "C2", {**switched, "language_changes": []}))
