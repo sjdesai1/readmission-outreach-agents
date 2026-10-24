@@ -2,6 +2,7 @@
 
     make ab                                   # write_message v10 (A) vs v11 (B), turn + red-team cases
     make ab task=review_message a=v3 b=v4     # any prompt, any two versions
+    make ab judge=1                           # also grade every drafted message with the LLM judge
 
 Why paired: both versions answer exactly the same patient messages, so each case is its own control and the
 noise from case difficulty cancels out. With ~70 cases, an unpaired comparison couldn't see small differences.
@@ -11,8 +12,9 @@ in pass rate and no more rewrites. A change ships only if the primary metric doe
 
   primary    pass rate on turn + red-team evals; McNemar exact test on the cases where A and B disagree
   secondary  words per message, reading grade (Flesch-Kincaid, English messages), drafts sent back for a
-             rewrite, advisory notes from the reviewer; paired mean difference with a bootstrap 95% CI and a
-             Wilcoxon signed-rank test
+             rewrite, advisory notes from the reviewer; with judge=1, messages the LLM judge passes on every
+             criterion (milestone 6); paired mean difference with a bootstrap 95% CI and a Wilcoxon signed-rank
+             test
 Several secondary metrics are tested, so a lone p just under 0.05 is weak evidence: look at the intervals.
 LLM agents only; every call is cached, so rerunning either arm is free.
 """
@@ -91,7 +93,19 @@ def paired(a: list[float], b: list[float], seed: int = 7) -> dict | None:
 
 
 # ------------------------------------------------------------------ running
-def run_arm(task: str, version: str, cases: list[dict]) -> list[dict]:
+def judged(case: dict, result: dict) -> float | None:
+    """1.0 if the judge passes the sent message on every criterion, 0.0 if not, None if nothing was sent or the
+    judge couldn't grade it. Same item format as make eval-judge."""
+    from readmit.evals import judge
+
+    items = judge.items_from_turns({"results": [result]}, [case], "ab")
+    if not items:
+        return None
+    j = judge.judge(items[0])
+    return None if not j.get("verdicts") else float(all(v != "no" for v in j["verdicts"].values()))
+
+
+def run_arm(task: str, version: str, cases: list[dict], with_judge: bool = False) -> list[dict]:
     from readmit.agents import llm_agents
 
     llm_agents.PROMPTS[task] = version
@@ -108,6 +122,7 @@ def run_arm(task: str, version: str, cases: list[dict]) -> list[dict]:
                 "grade": fk_grade(text),
                 "rewritten": float(f.get("writer_calls", 0) > 1) if text else None,
                 "advisory": float(f.get("advisory", False)) if text else None,
+                "judged": judged(c, r) if with_judge else None,
                 "text": text,
             }
         )
@@ -117,8 +132,8 @@ def run_arm(task: str, version: str, cases: list[dict]) -> list[dict]:
 
 def compare(a: list[dict], b: list[dict]) -> dict:
     out = {"primary": mcnemar([x["passed"] for x in a], [y["passed"] for y in b])}
-    for k in ("words", "grade", "rewritten", "advisory"):
-        out[k] = paired([x[k] for x in a], [y[k] for y in b])
+    for k in ("words", "grade", "rewritten", "advisory", "judged"):
+        out[k] = paired([x.get(k) for x in a], [y.get(k) for y in b])
     return out
 
 
@@ -127,14 +142,15 @@ def main() -> None:
     ap.add_argument("--task", default="write_message")
     ap.add_argument("--a", default="v10")
     ap.add_argument("--b", default="v11")
+    ap.add_argument("--judge", action="store_true", help="grade each drafted message with the LLM judge")
     args = ap.parse_args()
     _use_eval_database()
     cases = [c for name in DATASETS for c in load_cases(REPO_ROOT / "evals" / f"{name}.jsonl")]
     from readmit.llm import usage_since
 
     started = datetime.now().astimezone()
-    arm_a = run_arm(args.task, args.a, cases)
-    arm_b = run_arm(args.task, args.b, cases)
+    arm_a = run_arm(args.task, args.a, cases, args.judge)
+    arm_b = run_arm(args.task, args.b, cases, args.judge)
     r = compare(arm_a, arm_b)
 
     p = r["primary"]
@@ -142,13 +158,13 @@ def main() -> None:
     print(f"  primary  pass rate  A {p['a_rate']:.0%}  B {p['b_rate']:.0%}   "
           f"only A passed {p['a_only']}, only B passed {p['b_only']}, McNemar p = {p['p']:.3f}")  # fmt: skip
     print(f"\n  {'secondary':<11} {'n':>3} {'A':>7} {'B':>7} {'B - A':>8} {'95% CI':>18} {'p':>7}")
-    labels = {"words": "words", "grade": "grade", "rewritten": "rewrites", "advisory": "advisory"}
+    labels = {"words": "words", "grade": "grade", "rewritten": "rewrites", "advisory": "advisory", "judged": "judge ok"}
     for k, label in labels.items():
         m = r[k]
         if not m:
             print(f"  {label:<11} too few cases")
             continue
-        pct = k in ("rewritten", "advisory")
+        pct = k in ("rewritten", "advisory", "judged")
 
         def f(x, pct=pct):
             return f"{x:.0%}" if pct else f"{x:.1f}"

@@ -52,8 +52,13 @@ IGNORES = {
     "Spanish": "Hola, le escribe su equipo de atención de Orchard Valley. Esperamos que tenga una buena semana.",
 }
 TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\s*(AM|PM)\b")
-INFORMAL = [(r"\busted\b", "tú"), (r"\bResponda\b", "Responde"), (r"\bresponda\b", "responde"), (r"\bsu\b", "tu"),
-            (r"\bSu\b", "Tu"), (r"\ble\b", "te"), (r"\bpuede\b", "puedes"), (r"\bquiere\b", "quieres")]  # fmt: skip
+INFORMAL = [  # usted -> tú; the phrase first, before "usted" alone is swapped
+    (r"\bse comunicará con usted\b", "te contactará"), (r"\busted\b", "tú"), (r"\bResponda\b", "Responde"),
+    (r"\bresponda\b", "responde"), (r"\bSu\b", "Tu"), (r"\bsu\b", "tu"), (r"\ble\b", "te"),
+    (r"\b(ayudar|ver|contactar|llamar|escribir|recordar)le\b", r"\1te"), (r"\bpuede\b", "puedes"),
+    (r"\bquiere\b", "quieres"), (r"\bnecesita\b", "necesitas"), (r"\btiene\b", "tienes"), (r"\bllame\b", "llama"),
+]  # fmt: skip
+MIN_CHANGES = 2  # v2 of the planted set: v1 let one-word changes through, so some "errors" were barely there
 BROKEN = [(r"\byour\b", "you"), (r"\bis\b", "are"), (r"\bwe'll\b", "we will to"), (r"\bthe\b", "")]
 NEXT_STEP = re.compile(
     r"[^.?!]*(\?|\breply\b|\brespond|\bresponda\b|\blet us know\b|\bavísenos\b)[^.?!]*[.?!]?", re.IGNORECASE
@@ -61,10 +66,13 @@ NEXT_STEP = re.compile(
 
 
 # ------------------------------------------------------------------ planted errors (pure)
-def _sub_all(text: str, rules: list[tuple[str, str]]) -> str:
+def _sub_all(text: str, rules: list[tuple[str, str]]) -> tuple[str, int]:
+    """The text with every rule applied, and how many replacements were made."""
+    n = 0
     for pattern, repl in rules:
-        text = re.sub(pattern, repl, text)
-    return re.sub(r"  +", " ", text)
+        text, k = re.subn(pattern, repl, text)
+        n += k
+    return re.sub(r"  +", " ", text), n
 
 
 def plant(item: dict, flaw: str) -> dict | None:
@@ -82,8 +90,10 @@ def plant(item: dict, flaw: str) -> dict | None:
     elif flaw == "jargon":
         new, target = f"{msg} {JARGON[lang]}", "plain_language"
     elif flaw == "bad_language":
-        new = _sub_all(msg, INFORMAL if lang == "Spanish" else BROKEN)
+        new, changes = _sub_all(msg, INFORMAL if lang == "Spanish" else BROKEN)
         target = "language_quality"
+        if changes < MIN_CHANGES:  # one swapped word is a typo, not a test of the criterion
+            new = None
     elif flaw == "no_next_step":
         new = NEXT_STEP.sub("", msg).strip()
         target = "clear_next_step"
@@ -266,6 +276,20 @@ def check() -> None:
     if u:
         print(f"\n  LLM: {u['calls']} calls ({u['cache_hits']} cache hits), ${u['cost_usd']:.4f}")
 
+    J.record_run(
+        "check",
+        None,
+        c["total"],
+        c["rate"],
+        {
+            "by_flaw": p["by_flaw"],
+            "false_alarms": fa["n"],
+            "originals": fa["total"],
+            "labels": a and a["n"],
+            "agree": a and a["agree"],
+            "kappa": a and a["kappa"],
+        },
+    )
     out = {"judge_model": settings.llm_judge_model, "prompt": J.PROMPT, "planted": p, "agreement": a,
            "planted_items": planted_judged}  # fmt: skip
     (J.REPORTS / "judge_check.json").write_text(json.dumps(out, indent=2, ensure_ascii=False, default=str))

@@ -190,3 +190,23 @@ It probably would, fluently. But an outreach message carries times, dates and a 
 
 **Q: Why evaluate the rule-based fallback at all?**
 It's what patients get when the budget runs out or the LLM is down. The red team showed the fallback had the only real safety gap.
+
+## Milestone 6: LLM judge
+
+**Q: How do you evaluate free-text output at scale?**
+An LLM judge: a different model grades each message on seven yes/no criteria, a reason before each verdict. Yes/no, not 1-10: scores drift and can't be checked against a person.
+
+**Q: How do you know the judge is right?**
+Two checks it wasn't tuned on. Planted errors: good messages broken on purpose, one flaw each; it caught every wrong time, medical advice, pressure and jargon, with no false alarms, but only half the grammar and Spanish formality errors. And 20 messages I labeled blind: 18 of 20 agree, kappa 0.80.
+
+**Q: Where does the judge fail?**
+It can't verify promises. Both disagreements were "a nurse will follow up" with no nurse task behind it; the text looks fine. So promises are checked by code against what's on file, and Spanish formality by a rule. The judge grades wording; code checks facts.
+
+**Q: Did you change the judge after seeing its mistakes?**
+Once: it couldn't see the offer "the second one" referred to, and it failed correct refusals. That moved its pass rate from 90% to 99%, so those numbers are inflated by design; the trustworthy ones come from the planted set and my labels.
+
+**Q: What did labeling find that the evals missed?**
+Four real bugs: a template promising a nurse callback no one was assigned, the writer promising a free ride and an interpreter nothing arranged, video offered to a patient who can't do video, and leg swelling inside a yes booked instead of sent to a nurse in the fallback.
+
+**Q: Did the prompt A/B hold up?**
+No. The milestone 5 result, v11 three words shorter, didn't replicate on a rerun with more cases. v11 stayed because it loses nothing. A small secondary effect from one run is a hypothesis.

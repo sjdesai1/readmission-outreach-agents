@@ -20,7 +20,7 @@ v1: working end to end. v2: see the roadmap below.
 | 3 | Multi-agent system in LangGraph: 5 agents, rule nodes, guardrails, nurse handoff, memory, tracing | done |
 | 4 | Conversation loop: simulated days, scripted patients, appointments, nurse queue, outcomes and holdout, re-scoring, cost controls | done |
 | 5 | Evals: per turn, per conversation, red team and threat model, program effect, prompt A/B, Grafana monitoring | done |
-| 6 | LLM judge and judge assessment | |
+| 6 | LLM judge, checked against planted errors and human labels; judge scores in A/B and Grafana | done |
 | 7 | Timeline viewer, `make demo` | |
 
 ## Quick start
@@ -60,8 +60,19 @@ make ab                 # prompt A/B, paired (task=, a=, b=)
 ```
 Dashboard and alerts: http://localhost:3000 · runbook: [docs/runbook.md](docs/runbook.md) · threat model: [docs/threat_model.md](docs/threat_model.md)
 
+Milestone 6: LLM judge
+```bash
+make eval-judge         # grade the messages from the last LLM eval runs (agents=rule-based for the templates)
+make judge-label        # label 20 judged messages yourself, blind to the judge
+make judge-check        # planted errors + agreement with your labels (kappa)
+make ab judge=1         # prompt A/B with judge scores
+```
+
 ## Roadmap (v2)
 
+- Fixes from milestone 6 labeling (next): a symptom inside a yes always goes to a nurse in the rule-based fallback; promises (nurse callback, ride, interpreter, video) checked by code against what's on file; tú forms blocked in Spanish; cost and video preferences read by the fallback ([ADR 0011](docs/decisions/0011-judge-grades-wording-code-checks-promises.md))
+- Patient messages with urgency: high-tier patients told they were flagged for extra follow-up "to help you avoid going back to the hospital" (a purpose, never a prediction or score), with a real deadline ("Dr. Test would like to see you by Mon Sep 14") and their own doctor named; a fixed opening sentence written by code, the rest by the writer; a judge criterion for urgency; an A/B of this framing against "flagged as likely to be readmitted", decided by booking rate; ADR for the choice
+- Message polish from judge labeling: re-offer the times instead of "the options from our last message"; when declining a diagnosis by text, say why (privacy) and that a nurse will go over it; a booking confirmation mentions the ride arranged when the patient has no transport
 - Uplift model: a causal forest (EconML) on the randomized holdout data, to rank patients by how much outreach helps them, not only by risk
 - PCP notifications: a daily digest to each patient's primary care doctor when a patient crosses a risk threshold or has an ED visit; deduplicated, LLM summary checked against the facts, measured by open rate and visit attendance
 - Learning sequencer: a bandit choosing channel and timing per patient

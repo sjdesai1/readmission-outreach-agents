@@ -497,6 +497,103 @@
           "rawSql": "select detail->>'trigger' as trigger, count(*) as rescores, round(avg((detail->>'before')::numeric), 3) as avg_before, round(avg((detail->>'after')::numeric), 3) as avg_after from outreach.events where type = 'rescored' group by 1 order by 1"
         }
       ]
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Message quality: LLM judge on eval runs (milestone 6)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "title": "LLM messages passing every criterion (latest judge run)",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-eval-pg"
+      },
+      "description": "Share of the messages from the last LLM eval runs that the judge passed on all seven criteria. The judge was checked against planted errors and human labels (make judge-check).",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 6,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-eval-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select pass_rate from ops.judge_runs where kind = 'judge' and agents = 'llm' order by ts desc limit 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "green",
+                "value": 0.9
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "title": "Judge runs and judge checks",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "app-eval-pg"
+      },
+      "description": "judge: share of messages passing every criterion. check: share of planted errors caught; detail has false alarms and agreement with human labels (kappa).",
+      "gridPos": {
+        "x": 6,
+        "y": 29,
+        "w": 18,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "app-eval-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "select ts, kind, agents, judge_model, prompt, messages, round(pass_rate::numeric, 2) as rate, detail ->> 'kappa' as kappa, detail ->> 'false_alarms' as false_alarms from ops.judge_runs order by ts desc limit 15"
+        }
+      ]
     }
   ],
   "description": "LLM cost and reliability, the nurse queue, and the outreach program. Source of truth: docker/grafana/dashboards/outreach.json"
