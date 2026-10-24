@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score signals landmark pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns eval-conversations eval-redteam eval-judge effect ab
+        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns eval-conversations eval-redteam eval-judge judge-label judge-check effect ab
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -127,6 +127,12 @@ effect:         ## program effect estimators vs the truth, over 1000 outcome dra
 
 eval-judge:     ## LLM judge grades the messages from the last eval runs (agents=rule-based, limit=n)
 	LANGSMITH_TRACING=false uv run python -m readmit.evals.judge $(if $(agents),--agents $(agents)) $(if $(limit),--limit $(limit))
+
+judge-label:    ## label 20 judged messages yourself in the terminal (pass/fail + criteria); resumable
+	uv run python -m readmit.evals.judge_check label
+
+judge-check:    ## is the judge right? planted errors + agreement with your labels
+	LANGSMITH_TRACING=false uv run python -m readmit.evals.judge_check check
 
 ab:             ## prompt A/B on turn + red-team cases, paired (task=write_message a=v10 b=v11)
 	LANGSMITH_TRACING=false uv run python -m readmit.evals.ab --task $(or $(task),write_message) --a $(or $(a),v10) --b $(or $(b),v11)
