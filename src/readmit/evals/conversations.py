@@ -88,6 +88,14 @@ def collect(case_id: str) -> dict:
         tasks = db.rows(c, "select * from outreach.nurse_tasks where case_id = :id order by created_at", id=case_id)
         refs = [r["type"] for r in db.rows(c, "select type from outreach.referrals where case_id = :id", id=case_id)]
         status = db.one(c, "select status from outreach.cases where case_id = :id", id=case_id)["status"]
+        events = db.rows(
+            c,
+            """select at, type, detail from outreach.events where case_id = :id
+               and (type in ('memory_saved', 'barrier_recorded', 'language_changed', 'appointment_booked')
+                    or (type = 'note' and detail ->> 'note' like 'intent:%'))
+               order by at, event_id""",
+            id=case_id,
+        )
     patient = store.patient_summary(case_id)["patient"]
     return {
         "status": status,
@@ -113,6 +121,15 @@ def collect(case_id: str) -> dict:
             for t in tasks
         ],
         "referrals": refs,
+        "decisions": [  # what the agents read and saved, in order: the first place to look when a goal fails
+            f"{e['at']:%a %H:%M} "
+            + (
+                e["detail"].get("note")
+                if e["type"] == "note"
+                else f"{e['type']} {json.dumps(e['detail'], default=str)}"
+            )
+            for e in events
+        ],
     }
 
 
@@ -215,10 +232,12 @@ def metrics(f: dict, start: datetime) -> dict:
 
 
 def diagnose(f: dict) -> dict:
-    """What to look at when a conversation fails: nurse task reasons (counted) and the last messages."""
+    """What to look at when a conversation fails: nurse task reasons (counted), what the agents read and saved
+    (intents, preferences, barriers, bookings), and the last messages."""
     reasons = Counter(t["reason"][:160] for t in f["nurse_tasks"])
     return {
         "nurse_reasons": [f"{n}x {r}" for r, n in reasons.most_common(3)],
+        "decisions": [d[:140] for d in f.get("decisions", [])][-8:],
         "last_messages": [
             f"{m['at']:%a %H:%M} {m['author']:>7} {m['channel']}: {m['body'][:110]}" for m in f["messages"][-4:]
         ],
@@ -335,6 +354,8 @@ def main() -> None:
                     print(f"    {r['persona']} {r['case']} seed {r['seed']}: {c['check']}, got {c['got']}")
             for line in r["why"]["nurse_reasons"]:
                 print(f"      nurse task: {line}")
+            for line in r["why"]["decisions"]:
+                print(f"      decided: {line}")
             for line in r["why"]["last_messages"]:
                 print(f"      {line}")
 

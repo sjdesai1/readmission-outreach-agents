@@ -287,3 +287,27 @@ def test_a_barrier_in_a_reply_is_recorded_and_gets_a_ride_referral():
     assert s["intent"]["intent"] == "barrier" and "transport_barrier" in s["summary"]["risk"]["barriers"]
     assert s["plan"]["referrals_filed"] == ["transport"]
     assert "transporte" in outbound("C2")[-1]["body"]
+
+
+def test_a_taken_pick_is_replaced_by_times_that_keep_the_standing_preference(add_slot):
+    """Conversation eval bug: Maria works mornings (saved), picked an afternoon that was gone by her reply, and was
+    offered mornings: the reply's details (the day of the gone time) left nothing to fit, and the fallback dropped
+    every preference. The reply "the first one" only names that time; the standing preference still holds."""
+    from datetime import timedelta
+
+    from readmit.evals.fixture import NOW
+
+    store.remember_preference("C1", "part_of_day", "afternoon", "I work mornings")
+    add_slot("A1", (NOW + timedelta(days=2)).replace(hour=14))  # Fri Sep 11, 2 PM: the only afternoon, offered
+    turn("C1")
+    assert next(o["slot_id"] for o in store.offered_slots("C1")) == "A1"
+    store.book_appointment("C2", "A1", "kt-gone")  # someone else takes it before Maria replies
+    add_slot("A2", (NOW + timedelta(days=3)).replace(hour=15))  # Sat Sep 12, 3 PM
+
+    async def reads_the_gone_day(state, gw):  # what the LLM interpreter did: the pick's weekday as a request
+        details = {"choice": "1", "preferred_days": ["Friday"]}
+        return {"intent": {"intent": "wants_visit", "accepts": True, "details": details}}
+
+    s = turn("C1", "The first one works.", channel="email", agents={"reply_interpreter": reads_the_gone_day})
+    assert "no longer open" in s["schedule"]["note"] and not s["schedule"]["appointment"]
+    assert [o["start_at"][11:13] for o in s["schedule"]["offered"]] == ["15"]  # afternoon only: A2

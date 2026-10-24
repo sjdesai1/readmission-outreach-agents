@@ -8,7 +8,7 @@ import re
 
 from readmit.agents.gateway import Gateway, ToolFailed
 from readmit.agents.guards import search_window, slot_fits
-from readmit.agents.state import TurnState, picked_option, request_details, when, when_es
+from readmit.agents.state import TurnState, picked_option, request_details, standing_details, when, when_es
 
 
 async def care_planner(state: TurnState, gw: Gateway) -> dict:
@@ -97,6 +97,24 @@ async def picked_offer(state: TurnState, gw: Gateway) -> dict | None:
     return {"option": n, "slot": pick}
 
 
+async def _fitting(gw: Gateway, case_id: str, details: dict, now: str) -> list[dict]:
+    """Up to 3 open slots that fit `details` (days, time of day, time bounds)."""
+    earliest, latest = search_window(details, now)
+    found = (
+        await gw.call(
+            "scheduling",
+            "find_slots",
+            case_id=case_id,
+            earliest=earliest,
+            latest=latest,
+            part_of_day=details.get("part_of_day"),
+            limit=10,
+        )
+        or []
+    )
+    return [s for s in found if not slot_fits(s["start_at"], details)][:3]
+
+
 async def scheduler(state: TurnState, gw: Gateway) -> dict:
     case_id, intent = state["case_id"], state.get("intent") or {}
     details = request_details(state)  # this reply on top of standing preferences
@@ -122,26 +140,17 @@ async def scheduler(state: TurnState, gw: Gateway) -> dict:
                 if gone
                 else f"the patient picked option {picked['option']}, which we didn't offer; offer these"
             )
-        earliest, latest = search_window(details, state["now"])
-        found = (
-            await gw.call(
-                "scheduling",
-                "find_slots",
-                case_id=case_id,
-                earliest=earliest,
-                latest=latest,
-                part_of_day=details.get("part_of_day"),
-                limit=10,
-            )
-            or []
-        )
-        fitting = [s for s in found if not slot_fits(s["start_at"], details)][:3]
-        if not fitting:  # nothing matches the request: offer the closest options and say so
-            if note:  # already explaining a picked time that's gone
+            # "the first one" only named that time: what an interpreter read into it (its day, its time of day) is
+            # not a new request. Search again with the standing preferences alone.
+            details = standing_details(state)
+        fitting = await _fitting(gw, case_id, details, state["now"])
+        if not fitting:  # nothing matches this request: keep the standing preferences if any, then anything
+            standing = standing_details(state)
+            if standing and standing != details:
+                fitting = await _fitting(gw, case_id, standing, state["now"])
+            if not fitting:
                 fitting = await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or []
-            else:
-                fitting = await gw.call("scheduling", "find_slots", case_id=case_id, limit=3) or []
-                note = "no open times match what the patient asked for; these are the closest options"
+            note = note or "no open times match what the patient asked for; these are the closest options"
         offered = [
             {
                 "slot_id": s["slot_id"],
