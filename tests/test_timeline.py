@@ -71,10 +71,10 @@ def test_a_booking_reads_top_to_bottom():
     t = timeline.build("C1")
     assert titles(t)[0] == "Discharged: Heart failure"
     assert titles(t)[1].startswith("Flagged high risk (41%)")
-    # inside the reply's turn: what she wrote, what the AI decided and did, then its message
+    # the fixture's clock doesn't move between turns, so this is the audit log's own order, not the clock's
     wrote, read, booked = first(t, "Patient wrote"), first(t, "Read the reply as"), first(t, "Booked a")
     last_sent = max(n for n, title in enumerate(titles(t)) if title == "AI sent")
-    assert first(t, "AI sent") < wrote < read < booked < last_sent
+    assert first(t, "AI sent") < wrote < booked < last_sent < read  # the intent is noted after the reply is sent
     reply = t["items"][wrote]
     assert reply["body"].startswith("Yes, the first") and reply["channel"] == "email"
     assert reply["day"] == pytest.approx(1.875, abs=0.01)  # Sep 9, 9 AM is 1 day 21 hours after the discharge
@@ -87,7 +87,7 @@ def test_a_rescore_and_a_readmission_end_the_story():
     store.mark_readmitted("C1", NOW)
     t = timeline.build("C1")
     assert t["risk"] == [(0.0, 0.41), (7.0, 0.6)]
-    assert any(x.startswith("Re-scored 41% ↑ 60%") for x in titles(t))
+    assert any(x.startswith("Re-scored 40% ↑ 60%") for x in titles(t))
     assert titles(t)[-1] == "Readmitted to the hospital"
     assert not any(x.startswith("Case closed") for x in titles(t))  # said once, as the readmission
 

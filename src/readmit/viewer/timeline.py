@@ -113,7 +113,9 @@ def build(case_id: str) -> dict:
         case = db.one(c, "select * from outreach.cases where case_id = :id", id=case_id)
         stay = db.one(c, "select discharge_datetime from cohort.stays where encounter_id = :e", e=case["encounter_id"])
         events = db.rows(
-            c, "select at, type, detail from outreach.events where case_id = :id order by event_id", id=case_id
+            c,
+            "select event_id, at, type, detail from outreach.events where case_id = :id order by event_id",
+            id=case_id,
         )
         messages = db.rows(c, "select * from outreach.messages where case_id = :id order by seq", id=case_id)
         tasks = db.rows(
@@ -122,11 +124,19 @@ def build(case_id: str) -> dict:
     discharged = stay["discharge_datetime"] if stay else None
     risk0 = (s.get("risk") or {}).get("risk")
     items = []
+    # every message and nurse task has an audit event: its event_id is the true order inside a minute
+    seq = {}
+    for e in events:
+        d = e["detail"] or {}
+        for key in ("message_id", "task_id"):
+            if d.get(key):
+                seq.setdefault((key, d[key], e["type"] == "nurse_task_resolved"), e["event_id"])
+    last = (events[-1]["event_id"] if events else 0) + 1
 
-    def add(at, kind, actor, title, detail="", **extra):
+    def add(at, kind, actor, title, detail="", order=0, **extra):
         items.append(
             {"at": str(at)[:16], "day": _day(at, discharged), "kind": kind, "actor": actor, "title": title,
-             "detail": detail, **extra}
+             "detail": detail, "order": order, **extra}
         )  # fmt: skip
 
     if discharged:
@@ -149,19 +159,22 @@ def build(case_id: str) -> dict:
             subject=m.get("subject"),
             channel=m["channel"],
             status=m["status"],
+            order=seq.get(("message_id", m["message_id"], False), last),
         )
     for t in tasks:
         extra = f" · interpreter: {t['interpreter']}" if t.get("interpreter") else ""
         add(t["created_at"], "nurse", "ai", f"Handed to a nurse: {t['kind']} ({t['priority']}){extra}",
-            t["reason"], priority=t["priority"])  # fmt: skip
+            t["reason"], order=seq.get(("task_id", t["task_id"], False), last), priority=t["priority"])  # fmt: skip
         if t.get("resolved_at"):
-            add(t["resolved_at"], "nurse", "nurse", "Nurse resolved the task", t.get("resolution") or "")
+            add(t["resolved_at"], "nurse", "nurse", "Nurse resolved the task", t.get("resolution") or "",
+                order=seq.get(("task_id", t["task_id"], True), last))  # fmt: skip
     for e in events:
         if said := describe(e["type"], e["detail"]):
-            add(e["at"], *said)
+            add(e["at"], *said, order=e["event_id"])
     if case.get("closed_at") and case["status"] != "readmitted":
-        add(case["closed_at"], "outcome", "system", f"Case closed: {case['status']}", case.get("close_reason") or "")
-    items.sort(key=lambda i: (i["at"], _rank(i)))  # stable: same-minute items keep table order
+        add(case["closed_at"], "outcome", "system", f"Case closed: {case['status']}", case.get("close_reason") or "",
+            order=last)  # fmt: skip
+    items.sort(key=lambda i: (i["at"], i["order"]))  # the audit log's own order: what happened first comes first
 
     risk_path = [(0.0, float(risk0))] if risk0 is not None else []
     for e in events:
@@ -193,16 +206,6 @@ def build(case_id: str) -> dict:
         "risk": risk_path,
         "counts": {k: sum(i["kind"] == k for i in items) for k in KINDS},
     }
-
-
-def _rank(item: dict) -> int:
-    """Order inside one turn, where everything shares the simulation clock's minute: what the patient wrote, then
-    what the AI decided and did, then the AI's message, then the status it left the case in."""
-    if item["kind"] == "message":
-        return 1 if item["actor"] == "patient" else 6
-    if item["kind"] == "outcome":
-        return 0 if item["title"].startswith("Discharged") else 8
-    return {"risk": 2, "decision": 3, "visit": 4, "nurse": 5, "status": 7}.get(item["kind"], 9)
 
 
 def _driver(x) -> str:
