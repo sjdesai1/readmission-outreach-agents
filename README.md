@@ -21,10 +21,17 @@ v1: working end to end. v2: see the roadmap below.
 | 4 | Conversation loop: simulated days, scripted patients, appointments, nurse queue, outcomes and holdout, re-scoring, cost controls | done |
 | 5 | Evals: per turn, per conversation, red team and threat model, program effect, prompt A/B, Grafana monitoring | done |
 | 6 | LLM judge, checked against planted errors and human labels; judge scores in A/B and Grafana | done |
-| 7 | Timeline viewer, `make demo` | |
+| 7 | Timeline viewer, `make demo` | in progress |
 
 ## Quick start
 
+Just look at it (Docker and uv; no API key, no cost):
+```bash
+make setup && make demo     # stack, world and model (first run: a few minutes), 30 simulated days, links
+make timeline               # one case's whole story at http://localhost:8502
+```
+
+Step by step:
 ```bash
 make setup     # .env + local Python env; then add your Gemini and LangSmith keys to .env
 make up        # start the stack
@@ -71,6 +78,7 @@ make ab judge=1         # prompt A/B with judge scores
 Milestone 7: see what happened
 ```bash
 make timeline           # one case's whole story at http://localhost:8502 (shortcuts to interesting cases)
+make demo               # everything above from a fresh clone (llm=1 for the real agents, rebuild=1, days=)
 ```
 
 ## Roadmap (v2)

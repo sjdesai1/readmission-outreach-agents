@@ -1,7 +1,7 @@
 # Shortcuts. Each target is just the docker / python command written next to it.
 .PHONY: setup up down reset ps logs smoke smoke-airflow test lint check format typecheck audit cov upgrade \
         world cohort extract extract-eval train score signals landmark pipeline pipeline-airflow \
-        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns eval-conversations eval-redteam eval-judge judge-label judge-check effect ab timeline
+        outreach-setup mcp-logs inspector turn simulate nurse program program-eval eval-turns eval-conversations eval-redteam eval-judge judge-label judge-check effect ab timeline demo
 
 setup:          ## one-time: create .env, the local Python environment and the git hooks
 	@test -f .env || cp .env.example .env
@@ -138,5 +138,10 @@ ab:             ## prompt A/B on turn + red-team cases, paired (task=write_messa
 	LANGSMITH_TRACING=false uv run python -m readmit.evals.ab --task $(or $(task),write_message) --a $(or $(a),v10) --b $(or $(b),v11) $(if $(judge),--judge)
 
 # ---- milestone 7: demo ----
+demo:           ## fresh clone to a working demo: stack, world + model (once), 30 simulated days, summary and links
+	@test -f .env || cp .env.example .env
+	docker compose up -d --build --remove-orphans
+	uv run python -m readmit.demo $(if $(days),--days $(days)) $(if $(llm),--llm) $(if $(rebuild),--rebuild)
+
 timeline:       ## one case's whole story at http://localhost:8502: messages, decisions, nurse work, visits, outcome
 	uv run --extra ui streamlit run src/readmit/viewer/app.py --server.port 8502
