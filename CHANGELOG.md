@@ -5,6 +5,16 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Added
+- Case timeline (`make timeline`, http://localhost:8502): one case's whole story on one screen, oldest first.
+  Discharge and why the case was flagged, every message (patient, AI, nurse; channel, quiet-hours holds), what the
+  AI decided (how it read each reply, referrals, barriers, preferences, language and channel changes, identity
+  checks), nurse handoffs and how they were resolved, bookings, no-shows and cancellations, re-scores with a risk
+  chart, and the outcome. Read only, built from the audit tables the system already writes, so it shows exactly
+  the audit trail. Shortcuts to one example of each story (readmitted, urgent handoff, interpreter, language
+  switch, no-show, attended, risk rose, referral, opted out, no reply). Optional machine translation of
+  non-English messages, as on the nurse screen
+
 ### Fixed
 Found by labeling real messages in milestone 6 (ADR 0011); each has a test in tests/test_labeling_fixes.py and the
 turn evals have 4 new cases built from the labeled messages (57 now).
