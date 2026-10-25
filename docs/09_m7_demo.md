@@ -3,7 +3,7 @@
 Goal: anyone (a reviewer, a clinician, an interviewer) can open one patient's case and read what the system did, in order, without reading logs or SQL.
 
 ```bash
-make demo         # fresh clone -> stack, world and model, 30 simulated days, summary and links
+make demo         # fresh clone -> stack, world and model, 121 simulated days, summary and links
 make timeline     # http://localhost:8502
 ```
 
@@ -41,8 +41,8 @@ What it does:
 - Creates .env from the example if missing, starts the Docker stack
 - Waits for Postgres and the five MCP servers to accept connections (up to 4 minutes), naming whatever is still starting
 - Builds the world and the model only if live scores are missing: world, cohort, social factors, train, score, signals, re-score models. Later runs skip this (`rebuild=1` forces it)
-- Resets outreach and runs 30 simulated days with the rule-based agents
-- Prints cases by status, messages, bookings, nurse tasks, readmissions, up to 5 cases worth opening, and the links
+- Resets outreach and runs 121 simulated days with the rule-based agents: the live period is Sep 1 to Nov 30 and cases open at discharge, so 121 days lets the last discharge play out and get its 30-day outcome. A 30-day first version left 33 of 46 cases not yet discharged and no readmission decided
+- Prints cases by status (cases whose patient isn't discharged yet shown as such, not as "new"), messages, bookings, nurse tasks, readmissions, up to 5 cases worth opening, and the links
 
 ```bash
 make demo                 # free: rule-based agents, keyword social factors if no key

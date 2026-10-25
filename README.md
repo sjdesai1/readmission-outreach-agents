@@ -1,16 +1,28 @@
 # Readmission Risk + Outreach Agents
 
-End-to-end simulation of a hospital medicine readmission program, fully synthetic and free:
-messy physician notes parsed by an LLM, an XGBoost 30-day readmission model, and a LangGraph
-multi-agent chain that reaches flagged patients through the channels they opted into and works
-with them until a follow-up or telehealth visit is booked. Airflow runs it day by day on a
-simulated clock; LangSmith traces and evaluates every step.
+A simulated hospital medicine readmission program, end to end, synthetic and free:
+- Messy physician notes parsed by an LLM, every finding checked against the note
+- An XGBoost 30-day readmission model with SHAP reasons, and re-scoring after discharge
+- A LangGraph multi-agent system that reaches flagged patients by SMS, email, portal or phone, only on channels they opted into, books a follow-up or video visit, and hands anything clinical to a nurse
+- Evals at every level, an LLM judge checked against people, and a randomized holdout to measure the effect
 
-Docs: one per milestone in [docs/](docs/), interview Q&A in [docs/interview_qa.md](docs/interview_qa.md)
+Start with the [system card](docs/system_card.md): purpose, design, results, limitations, safety controls.
+Then one doc per milestone in [docs/](docs/), decisions in [docs/decisions/](docs/decisions/), interview Q&A in [docs/interview_qa.md](docs/interview_qa.md).
+
+## Results
+
+| | |
+|---|---|
+| Risk model | AUROC 0.804 vs 0.714 for LACE, the clinical standard |
+| Agent single turns | 57/57 (rule-based twin 52/57) |
+| Red team | 34/34 attacks stopped by the defense they target |
+| Whole conversations | 21/22 personas end correctly over 8 simulated days |
+| LLM judge | 45/56 planted errors, 0/15 false alarms, kappa 0.80 vs a person |
+| Program effect | randomized estimate within 0.7 points of the truth; the naive one 63% too high |
 
 ## Status
 
-v1: working end to end. v2: see the roadmap below.
+v1.0.0: working end to end. v2: see the roadmap below.
 
 | # | Milestone | Status |
 |---|---|---|
@@ -21,13 +33,13 @@ v1: working end to end. v2: see the roadmap below.
 | 4 | Conversation loop: simulated days, scripted patients, appointments, nurse queue, outcomes and holdout, re-scoring, cost controls | done |
 | 5 | Evals: per turn, per conversation, red team and threat model, program effect, prompt A/B, Grafana monitoring | done |
 | 6 | LLM judge, checked against planted errors and human labels; judge scores in A/B and Grafana | done |
-| 7 | Timeline viewer, `make demo` | in progress |
+| 7 | Case timeline viewer, `make demo`, system card | done |
 
 ## Quick start
 
 Just look at it (Docker and uv; no API key, no cost):
 ```bash
-make setup && make demo     # stack, world and model (first run: a few minutes), 30 simulated days, links
+make setup && make demo     # stack, world and model (first run: a few minutes), 121 simulated days, links
 make timeline               # one case's whole story at http://localhost:8502
 ```
 
