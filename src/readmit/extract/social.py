@@ -2,6 +2,7 @@
 
     python -m readmit.extract.social                 # every stay in train / test / live
     python -m readmit.extract.social --limit 30      # quick check on 30 stays first
+    python -m readmit.extract.social --rules         # keyword baseline, no LLM (make demo without a key)
 
 Writes features.social_extracted: one row per stay, 7 true/false factors, the evidence quotes,
 and how many findings were thrown out by the grounding check.
@@ -19,6 +20,26 @@ from readmit.sim.notes import SOCIAL_FACTORS
 
 PROMPT_NAME, PROMPT_VERSION = "extract_social_v1", "v1"
 TASK = "extract_social"
+
+# Keyword baseline: what a regex extractor would do. Used when there is no API key (make demo), so a fresh clone
+# still gets a model. Generic clinical phrases, sentence by sentence; a sentence about a relative, family history,
+# or a denial doesn't count. Weaker than the LLM on wording it hasn't seen (make extract-eval compares them).
+RULES = {
+    "lives_alone": r"\blives? (alone|by (him|her|them)?self)\b",
+    "no_caregiver": r"\bno (caregiver|one at home)|\bno (family|friends|family/friends)( nearby)? to help",
+    "transport_barrier": r"\bno (car|ride|transport\w*)\b|\bcan'?t afford (a )?(cab|taxi|ride)|\brelies on (the )?bus",
+    "low_health_literacy": r"teach-?back (incomplete|failed)|unable to (restate|teach)|\bconfused re\b|"
+    r"limited understanding|instructions repeated",
+    "housing_unstable": r"\bhomeless|\bshelter\b|\bevict\w*|couch.?surf|sleeping in (a |her |his )?car",
+    "substance_use": r"\betoh\b|\bmeth\b|\bcocaine\b|\bheroin\b|\bbeers?\b|\bdrinks? daily|\blast drink",
+    "med_nonadherence": r"ran out of (\w+ )?meds|\bnot taking\b|\bskips? (doses|meds)|missed doses|non-?adheren",
+}
+_NOT_THE_PATIENT = re.compile(
+    r"^(pt'?s )?(dtr|daughter|son|husband|wife|partner|brother|sister|mother|father|family)\b|\bfhx\b|"
+    r"family h(x|istory)|\b(mother|father) w/",
+    re.IGNORECASE,
+)
+_DENIED = re.compile(r"^(denies|no tobacco|no etoh|no illicit|no drug)|\bsober\b", re.IGNORECASE)
 
 
 class Factor(BaseModel):
@@ -48,6 +69,37 @@ def _norm(s: str) -> str:
 def grounded(evidence: str | None, source: str) -> bool:
     """A finding counts only if its quote really appears in that stay's notes (whitespace/case-insensitive)."""
     return bool(evidence) and _norm(evidence) in _norm(source)
+
+
+def extract_rules(text: str) -> dict:
+    """{factor: evidence sentence} for the factors the keyword rules find. The evidence is a sentence of the notes,
+    so it passes the same grounding check as the LLM's quotes."""
+    found = {}
+    for sentence in re.split(r"(?<=[.;])\s+|\n+", text):
+        sentence = sentence.strip()
+        if not sentence or _NOT_THE_PATIENT.search(sentence) or _DENIED.search(sentence):
+            continue
+        for factor, pattern in RULES.items():
+            if factor not in found and re.search(pattern, sentence, re.IGNORECASE):
+                found[factor] = sentence
+    return found
+
+
+def rules_rows(texts: dict[str, str], ids: list[str]) -> list[dict]:
+    rows = []
+    for eid in ids:
+        text = texts.get(eid, "")
+        found = {f: e for f, e in extract_rules(text).items() if grounded(e, text)}
+        rows.append(
+            {
+                "encounter_id": eid,
+                "extracted": True,
+                "ungrounded": 0,
+                "evidence": json.dumps(found),
+                **{f: f in found for f in SOCIAL_FACTORS},
+            }
+        )
+    return rows
 
 
 def notes_by_encounter(notes: pd.DataFrame) -> dict[str, str]:
@@ -83,7 +135,7 @@ def extract_batch(batch: dict[str, str], system: str) -> list[dict]:
     return rows
 
 
-def run(limit: int | None = None, batch_size: int = 6) -> pd.DataFrame:
+def run(limit: int | None = None, batch_size: int = 6, rules: bool = False) -> pd.DataFrame:
     from readmit import db
 
     stays = db.read(
@@ -94,6 +146,13 @@ def run(limit: int | None = None, batch_size: int = 6) -> pd.DataFrame:
         "select encounter_id, note_type, note_datetime, text from cohort.notes where encounter_id = any(:ids)", ids=ids
     )
     texts = notes_by_encounter(notes)
+    if rules:
+        out = pd.DataFrame(rules_rows(texts, ids))
+        out["prompt_version"] = "rules"
+        db.write(out, "features.social_extracted")
+        found = int(out[SOCIAL_FACTORS].to_numpy().sum())
+        print(f"\n  keyword rules: {len(out)} stays, {found} findings (no LLM)")
+        return out
     system = load_prompt(PROMPT_NAME)
 
     rows, failed = [], 0
@@ -132,8 +191,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=6)
+    ap.add_argument("--rules", action="store_true", help="keyword baseline instead of the LLM (no API key needed)")
     args = ap.parse_args()
-    run(args.limit, args.batch_size)
+    run(args.limit, args.batch_size, args.rules)
 
 
 if __name__ == "__main__":

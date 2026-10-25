@@ -42,3 +42,32 @@ def test_scoring_counts_tp_fp_fn():
     )
     r = score(pred, truth)["per_factor"]
     assert (r["lives_alone"]["tp"], r["substance_use"]["fp"], r["transport_barrier"]["fn"]) == (1, 1, 1)
+
+
+# ------------------------------------------------------------------ keyword baseline (make demo without a key)
+def test_keyword_rules_find_every_way_the_notes_write_a_factor():
+    from readmit.extract.social import extract_rules
+    from readmit.sim.notes import SOCIAL_POS
+
+    for factor, sentences in SOCIAL_POS.items():
+        for s in sentences:
+            assert factor in extract_rules(s), s
+
+
+def test_keyword_rules_skip_denials_relatives_and_family_history():
+    from readmit.extract.social import extract_rules
+    from readmit.sim.notes import FHX_FATHER, FHX_MOTHER, SOCIAL_NEG, TRAPS
+
+    family = f"FHx: {', '.join(FHX_MOTHER + FHX_FATHER)}."
+    for s in [*(x for xs in SOCIAL_NEG.values() for x in xs), *TRAPS, family]:
+        assert extract_rules(s) == {}, s
+
+
+def test_keyword_rows_are_grounded_and_one_per_stay():
+    from readmit.extract.social import rules_rows
+
+    texts = {"E1": "[progress | 2026-09-01 08:00]\nLives alone in apt. Denies ETOH/drugs.", "E2": "Has own car."}
+    rows = rules_rows(texts, ["E1", "E2", "E3"])
+    assert [r["encounter_id"] for r in rows] == ["E1", "E2", "E3"]
+    assert rows[0]["lives_alone"] and not rows[0]["substance_use"] and grounded("Lives alone in apt.", texts["E1"])
+    assert not any(rows[1][f] for f in SOCIAL_FACTORS) and not any(rows[2][f] for f in SOCIAL_FACTORS)
