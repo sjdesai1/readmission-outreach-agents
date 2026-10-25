@@ -5,6 +5,14 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+### Changed
+- v2 roadmap: "as real as a free simulation can be", every v1 shortcut and what replaces it (Airflow on a
+  shared accelerated clock, patients as a separate LLM-played service replying through an inbound webhook, an SMS
+  gateway mock, a nurse service, a FHIR server with Synthea patients, a queue and workers, nightly DAGs, injected
+  failures, access control)
+- docs/01 and the system card say what Airflow runs in v1: the build pipeline and the smoke test, not the live
+  program
+
 ## [1.0.0] - Milestone 7
 
 v1 complete: every milestone done, one command to run it, one page to read it.

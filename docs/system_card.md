@@ -108,6 +108,7 @@ Every action is in an audit trail; `make timeline` shows one case's trail in pla
 - The randomized estimate has 46% power at this program size: a real program needs more patients or a longer run
 - Without an API key the demo uses keyword rules for note factors, checked against the simulator's own phrasings; they would miss unseen wording on real notes
 - Synthetic data and scripted patients: real patients write more variously, and real clinics change
+- The live program runs as a Python loop over simulated hours, with scripted patients called in the same process; Airflow runs only the build pipeline. Replacing these shortcuts with a production-style simulation is the first v2 item (README roadmap)
 - English and Spanish only; Spanish quality labeled by a non-native speaker
 
 ## 7. Monitoring and operations

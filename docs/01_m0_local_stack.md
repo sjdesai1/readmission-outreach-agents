@@ -7,7 +7,7 @@ Goal: every service the project needs runs on the laptop with one command, and a
 | Service | What it is | Why this project needs it | Open it |
 |---|---|---|---|
 | Postgres | Relational database | One server, three databases: `airflow` (Airflow's own bookkeeping), `mlflow` (experiment records), `app` (patients, scores, cases, messages) | `localhost:5432` |
-| Airflow | Workflow orchestrator | Runs the DAGs: ingest, extract, score, outreach ticks, retrain, monitoring, evals. Each run = one simulated day | http://localhost:8080 |
+| Airflow | Workflow orchestrator | Runs the build pipeline DAG (world, cohort, extract, train, score) and the smoke test. The live program runs from `sim/days` in v1; an hourly outreach DAG is on the v2 roadmap | http://localhost:8080 |
 | MLflow | Experiment tracking + model registry | Logs every training run (params, metrics, model files); champion / challenger | http://localhost:5000 |
 | Mailpit | Fake email server with a web inbox | Catches every email the agents send, so they can be read | http://localhost:8025 |
 | LangSmith | Hosted tracing + evals (cloud, free tier) | Shows every LLM call and agent step; runs eval experiments | https://smith.langchain.com |
