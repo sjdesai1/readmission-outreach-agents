@@ -95,6 +95,27 @@ make demo               # everything above from a fresh clone (llm=1 for the rea
 
 ## Roadmap (v2)
 
+### As real as a free simulation can be
+
+Goal: remove every v1 shortcut a free simulation can replace, so the program runs the way a hospital would run it, only faster and with synthetic people.
+
+| v1 shortcut | v2 |
+|---|---|
+| A Python loop drives time | Airflow runs the hospital's hourly and nightly jobs on a shared accelerated clock (one simulated hour per real interval, set per run) |
+| Patients called inside the same process | A separate patient service; replies arrive only through an inbound webhook, the path a provider like Twilio uses |
+| Patients follow fixed scripts | Patients played by an LLM with a persona, memory and realistic reply delays (a local model through Ollama, free), so they can surprise the system |
+| SMS is a database row | A local SMS gateway mock: delivery receipts, delays, bounces, inbound webhooks (email already goes through real SMTP, Mailpit) |
+| Nurses are a script | A nurse service working shifts, plus a person as a real nurse in the nurse screen |
+| Patient data in our own tables | A FHIR server (HAPI FHIR) as the EHR, patients from Synthea, agents reading through it (revisits ADR 0001) |
+| One process, one turn at a time | A queue (Redis) and workers running turns in parallel, with a lock per case |
+| Model trained once | Nightly DAGs: re-scores, drift monitoring, scheduled retraining, evals and the judge on yesterday's messages |
+| Failures only in tests | Injected failures: LLM outages, SMS delays and bounces, clinic cancellations, an MCP server down, a flooded nurse queue |
+| No access control | Logins and roles for nurses, an access log on every chart and timeline view |
+
+Kept simulated on purpose: the hidden risk formula and true outcomes, so every number can still be checked against the truth. The fast loop stays for evals and `make demo`; the scripted personas stay for repeatable evals.
+
+### Product and model
+
 - Patient messages with urgency: high-tier patients told they were flagged for extra follow-up "to help you avoid going back to the hospital" (a purpose, never a prediction or score), with a real deadline ("Dr. Test would like to see you by Mon Sep 14") and their own doctor named; a fixed opening sentence written by code, the rest by the writer; a judge criterion for urgency; an A/B of this framing against "flagged as likely to be readmitted", decided by booking rate; ADR for the choice
 - Message polish from judge labeling: re-offer the times instead of "the options from our last message"; when declining a diagnosis by text, say why (privacy) and that a nurse will go over it; a booking confirmation mentions the ride arranged when the patient has no transport
 - Uplift model: a causal forest (EconML) on the randomized holdout data, to rank patients by how much outreach helps them, not only by risk
