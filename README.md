@@ -68,6 +68,11 @@ make judge-check        # planted errors + agreement with your labels (kappa)
 make ab judge=1         # prompt A/B with judge scores
 ```
 
+Milestone 7: see what happened
+```bash
+make timeline           # one case's whole story at http://localhost:8502 (shortcuts to interesting cases)
+```
+
 ## Roadmap (v2)
 
 - Patient messages with urgency: high-tier patients told they were flagged for extra follow-up "to help you avoid going back to the hospital" (a purpose, never a prediction or score), with a real deadline ("Dr. Test would like to see you by Mon Sep 14") and their own doctor named; a fixed opening sentence written by code, the rest by the writer; a judge criterion for urgency; an A/B of this framing against "flagged as likely to be readmitted", decided by booking rate; ADR for the choice
