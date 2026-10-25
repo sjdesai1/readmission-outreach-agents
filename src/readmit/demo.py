@@ -9,7 +9,8 @@ Steps (the Makefile starts the Docker stack first):
   1. wait for Postgres and the five MCP servers
   2. build the world and the model, only if they're missing: world, cohort, social factors from notes (the LLM
      with a key, keyword rules without one), train, score, post-discharge signals, re-score models
-  3. reset outreach and run the program over simulated days
+  3. reset outreach and run the program over simulated days (121 by default: every case opens and gets its
+     30-day outcome)
   4. print what happened, cases worth opening, and the links
 """
 
@@ -23,7 +24,10 @@ import time
 from readmit import db
 from readmit.config import settings
 from readmit.mcp.common import PORTS
+from readmit.sim import clock
 
+# the live period plus 30 days (121): every case opens, plays out, and gets its 30-day outcome
+DAYS = (clock.LIVE_END - clock.LIVE_START).days + 1 + 30
 LINKS = {
     "Case timeline": "make timeline     -> http://localhost:8502",
     "Nurse queue": "make nurse        -> http://localhost:8501",
@@ -89,8 +93,9 @@ def run(module_args: list[str], env: dict) -> None:
 def summary() -> dict:
     """What happened in the program: cases by status, messages, nurse work, visits, readmissions."""
     with db.transaction() as c:
-        status = {r["status"]: r["n"] for r in db.rows(
-            c, "select status, count(*) as n from outreach.cases group by status order by n desc")}  # fmt: skip
+        status = {r["status"]: r["n"] for r in db.rows(c, """
+            select case when c.opened_at > k.now then 'not discharged yet' else c.status end as status, count(*) as n
+            from outreach.cases c cross join outreach.sim_clock k group by 1 order by n desc""")}  # fmt: skip
         n = db.one(
             c,
             """select (select count(*) from outreach.messages where direction = 'outbound') as sent,
@@ -125,7 +130,7 @@ def report(s: dict, examples: list[dict]) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=30)
+    ap.add_argument("--days", type=int, default=DAYS)
     ap.add_argument("--llm", action="store_true", help="the LLM agents (needs GEMINI_API_KEY)")
     ap.add_argument("--rebuild", action="store_true", help="rebuild the world and the model even if they exist")
     args = ap.parse_args()

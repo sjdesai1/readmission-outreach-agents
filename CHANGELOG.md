@@ -5,7 +5,14 @@ each minor version is a finished milestone.
 
 ## [Unreleased]
 
+## [1.0.0] - Milestone 7
+
+v1 complete: every milestone done, one command to run it, one page to read it.
+
 ### Added
+- System card (docs/system_card.md): purpose and out-of-scope uses, architecture, data, results (model, agents,
+  judge, program effect), safety controls with how each is tested, known limitations, monitoring, and what real
+  use would need first
 - Case timeline (`make timeline`, http://localhost:8502): one case's whole story on one screen, oldest first.
   Discharge and why the case was flagged, every message (patient, AI, nurse; channel, quiet-hours holds), what the
   AI decided (how it read each reply, referrals, barriers, preferences, language and channel changes, identity
@@ -15,13 +22,18 @@ each minor version is a finished milestone.
   switch, no-show, attended, risk rose, referral, opted out, no reply). Optional machine translation of
   non-English messages, as on the nurse screen
 - `make demo`: from a fresh clone to a working demo in one command. Starts the stack, waits for Postgres and the
-  MCP servers, builds the world and the model only if they're missing, runs 30 simulated days with the
-  rule-based agents (no key, no cost), then prints what happened, cases worth opening and the links.
+  MCP servers, builds the world and the model only if they're missing, runs 121 simulated days with the
+  rule-based agents (no key, no cost), then prints what happened, cases worth opening and the links. 121 days is
+  the live period plus 30: every case opens, plays out and gets its 30-day outcome (a first 30-day default left
+  33 of 46 cases not yet discharged; they now show as "not discharged yet", not "new").
   `llm=1` uses the LLM agents (at most 5 outreach turns an hour, capped by the daily budget), `rebuild=1`
   rebuilds the world and model
 - Keyword baseline for social factors (`python -m readmit.extract.social --rules`): generic clinical phrases,
   sentence by sentence, skipping denials, relatives and family history. Used by `make demo` when there is no
   API key, so a fresh clone still gets a model
+
+### Changed
+- README: what it is, a results table and the system card first; milestone 7 done
 
 ### Fixed
 Found by labeling real messages in milestone 6 (ADR 0011); each has a test in tests/test_labeling_fixes.py and the

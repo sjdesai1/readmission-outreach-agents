@@ -1,6 +1,7 @@
 """make demo (milestone 7): the build steps, the readiness check, and the closing summary."""
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
@@ -35,3 +36,11 @@ def test_built_and_summary_read_the_database():
     asyncio.run(run_turn(Gateway.in_memory(), "C1", "outreach_due"))
     s = demo.summary()
     assert s["cases"] == 2 and s["sent"] == 1 and s["replies"] == 0 and s["readmitted"] == 0
+    assert "not discharged yet" not in s["by_status"]  # both fixture cases opened yesterday
+
+
+def test_the_default_run_lets_every_case_finish():
+    from readmit.sim import clock
+
+    end = clock.LIVE_START + timedelta(days=demo.DAYS)
+    assert end >= clock.LIVE_END + timedelta(days=30)  # the last discharge still gets its 30-day outcome

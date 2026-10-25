@@ -138,7 +138,7 @@ ab:             ## prompt A/B on turn + red-team cases, paired (task=write_messa
 	LANGSMITH_TRACING=false uv run python -m readmit.evals.ab --task $(or $(task),write_message) --a $(or $(a),v10) --b $(or $(b),v11) $(if $(judge),--judge)
 
 # ---- milestone 7: demo ----
-demo:           ## fresh clone to a working demo: stack, world + model (once), 30 simulated days, summary and links
+demo:           ## fresh clone to a working demo: stack, world + model (once), 121 simulated days, summary and links
 	@test -f .env || cp .env.example .env
 	docker compose up -d --build --remove-orphans
 	uv run python -m readmit.demo $(if $(days),--days $(days)) $(if $(llm),--llm) $(if $(rebuild),--rebuild)
