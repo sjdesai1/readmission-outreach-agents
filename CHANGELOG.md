@@ -6,6 +6,9 @@ each minor version is a finished milestone.
 ## [Unreleased]
 
 ### Changed
+- v2 roadmap: "Airflow the way a team runs it, with failures you can watch": scheduled DAGs (hourly outreach,
+  nightly re-score and evals, weekly retrain), retries and alerts, rerunning one failed task, run history,
+  backfills, parallel fan-out, jobs triggered by other jobs' outputs; each with a way to make it fail on purpose
 - v2 roadmap: "as real as a free simulation can be", every v1 shortcut and what replaces it (Airflow on a
   shared accelerated clock, patients as a separate LLM-played service replying through an inbound webhook, an SMS
   gateway mock, a nurse service, a FHIR server with Synthea patients, a queue and workers, nightly DAGs, injected

@@ -114,6 +114,22 @@ Goal: remove every v1 shortcut a free simulation can replace, so the program run
 
 Kept simulated on purpose: the hidden risk formula and true outcomes, so every number can still be checked against the truth. The fast loop stays for evals and `make demo`; the scripted personas stay for repeatable evals.
 
+### Airflow the way a team runs it, with failures you can watch
+
+Goal: see in real time what an orchestrator does when things go wrong, and practice fixing it. Every capability below gets a DAG and a way to break it on purpose (failure switches in the Airflow UI or a `chaos` config), so a run fails, alerts, and gets repaired by hand.
+
+| Capability | DAG and what to watch | How it's made to fail |
+|---|---|---|
+| Run on a schedule | `outreach_hourly` (every simulated hour), `nightly_rescore`, `weekly_retrain`, `nightly_evals` (turn evals + judge on yesterday's messages), on the accelerated clock | a schedule paused or a run skipped: see the gap in the grid |
+| A step fails at 3 AM | every task has retries with backoff; after the last retry an alert email (Mailpit) and a failed-run row on the Grafana dashboard | injected: LLM outage, Postgres refusing connections, an MCP server stopped, a task that times out |
+| Rerun only the failed step | `weekly_retrain`: extract → train → evaluate → promote; make `train` fail, fix it, clear that one task, watch it resume without redoing the slow LLM extraction | a bad config value in `train`, then corrected |
+| What ran last Tuesday, and did it pass? | the run history and per-task logs; each run also writes what it did (cases worked, messages sent, model version) to a `ops.pipeline_runs` table shown in Grafana | a run that passed but did nothing (0 cases worked) caught by a data check task |
+| Rerun last month's days | backfill `nightly_rescore` or `outreach_hourly` over a date range after a bug fix, and compare the results before and after | a deliberate bug in one day's logic, fixed, then backfilled |
+| Independent steps in parallel | `nightly_evals` fans out turn evals, red team, judge and drift checks at once, then joins into one report task | one branch fails: the others still finish, the join reports which |
+| Several jobs that depend on each other | data-aware scheduling (Airflow assets): a new champion model from `weekly_retrain` triggers `nightly_rescore`; new messages trigger the judge | an upstream job failing: the downstream one waits instead of running on stale data |
+
+Also: a model promotion gate (a new model replaces the champion only if it beats it on the test set and calibration), data quality checks between tasks (row counts, nulls, score ranges), SLA misses alerted, and a runbook entry per alert.
+
 ### Product and model
 
 - Patient messages with urgency: high-tier patients told they were flagged for extra follow-up "to help you avoid going back to the hospital" (a purpose, never a prediction or score), with a real deadline ("Dr. Test would like to see you by Mon Sep 14") and their own doctor named; a fixed opening sentence written by code, the rest by the writer; a judge criterion for urgency; an A/B of this framing against "flagged as likely to be readmitted", decided by booking rate; ADR for the choice
