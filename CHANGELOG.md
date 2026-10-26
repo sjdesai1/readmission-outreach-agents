@@ -9,6 +9,12 @@ each minor version is a finished milestone.
 - v2 roadmap: "Airflow the way a team runs it, with failures you can watch": scheduled DAGs (hourly outreach,
   nightly re-score and evals, weekly retrain), retries and alerts, rerunning one failed task, run history,
   backfills, parallel fan-out, jobs triggered by other jobs' outputs; each with a way to make it fail on purpose
+- v2 roadmap: compressed clock for the Airflow simulation (121 days in about 2 hours, speed set by
+  `SIM_SECONDS_PER_HOUR`), failures scheduled into the run, and an end-of-run report of what failed and what
+  needs a manual fix
+- v2 roadmap: "Realism and calibration": LLM-played patients, messy EHR data (Synthea + noise), an SMS
+  carrier mock, changing clinics, load tests, an attacker agent, effect sensitivity analysis, and calibration
+  against published readmission, no-show and SMS rates; the compressed clock waits for each hour's work
 - v2 roadmap: "as real as a free simulation can be", every v1 shortcut and what replaces it (Airflow on a
   shared accelerated clock, patients as a separate LLM-played service replying through an inbound webhook, an SMS
   gateway mock, a nurse service, a FHIR server with Synthea patients, a queue and workers, nightly DAGs, injected
