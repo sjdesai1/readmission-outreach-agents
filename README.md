@@ -128,7 +128,25 @@ Goal: see in real time what an orchestrator does when things go wrong, and pract
 | Independent steps in parallel | `nightly_evals` fans out turn evals, red team, judge and drift checks at once, then joins into one report task | one branch fails: the others still finish, the join reports which |
 | Several jobs that depend on each other | data-aware scheduling (Airflow assets): a new champion model from `weekly_retrain` triggers `nightly_rescore`; new messages trigger the judge | an upstream job failing: the downstream one waits instead of running on stale data |
 
+Compressed clock: the whole 121-day program runs on Airflow while the laptop is awake, in about 2 hours (one simulated hour ≈ 2.5 real seconds), set by `SIM_SECONDS_PER_HOUR`, and the clock only moves on when that hour's work is done (a slow LLM call or a retry never skips simulated hours; retry delays are set in simulated time), so a short test, a 2-hour run or a slower "live" run use the same DAGs. Hourly DAGs run every simulated hour, nightly jobs at simulated 2 AM, retraining weekly; failures are scheduled into the run (an LLM outage on day 12, an MCP server down on day 40, a bad config in a retrain); at the end, a report lists what ran, what failed, what retried and recovered, and what still needs a manual fix (clear a task, rerun, backfill). Rule-based agents by default so it stays free; `llm=1` for a smaller program.
+
 Also: a model promotion gate (a new model replaces the champion only if it beats it on the test set and calibration), data quality checks between tasks (row counts, nulls, score ranges), SLA misses alerted, and a runbook entry per alert.
+
+### Realism and calibration
+
+Goal: close the gaps between the simulation and a real hospital as far as a free simulation can, then check its rates against published figures before trusting any result.
+
+| Real-world gap | Simulated by | Free tools |
+|---|---|---|
+| Patients are unpredictable | LLM-played patients sampled across literacy, tone, typos, emojis, voice-to-text errors, code-switching, contradicting themselves, replying days late or to the wrong message, one phone shared by a family | Ollama (local model), persona generator |
+| EHR data is messy | Synthea patients with injected noise: missing fields, duplicate records, old phone numbers, late-signed notes, conflicting medication lists, landlines marked mobile, merged charts | Synthea, HAPI FHIR, noise script |
+| Carriers delay and filter | SMS gateway mock: delivery times from a realistic distribution, drops, duplicates, out-of-order delivery, spam filters on links and words, rate limits, carrier-level STOP | FastAPI mock service |
+| Clinics change | providers out sick, schedule changes, holidays, double bookings, no-shows by weekday and distance, varying nurse staffing, a policy change mid-run | simulation rules |
+| Volume | 10x to 100x patients, Monday-morning bursts, a flu-season spike: find what slows or breaks first | Locust |
+| Attackers | an attacker agent writing new attacks, standard LLM attack suites, spoofed webhooks (signature checks), brute-force logins on the nurse screen, injection against the APIs | LLM attacker, garak, PyRIT |
+| The true effect is unknown | runs under different assumed effects (none, small, large, harmful: annoyed patients opting out), reporting which conclusions survive | sensitivity analysis in evals/effect.py |
+
+Calibration: the simulation's rates are set from published figures (30-day readmissions about 15 to 20%, outpatient no-shows about 20 to 30%, typical SMS reply and delivery-failure rates), and a check fails if a run drifts outside them. What no simulation can answer: whether real people behave like the assumptions, and the true effect on real patients. Those need a pilot; the simulation's job is to make the pilot uneventful.
 
 ### Product and model
 
